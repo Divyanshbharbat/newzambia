@@ -1,9 +1,12 @@
 Set WshShell = CreateObject("WScript.Shell")
 
+' give windows some time to start the process
+WScript.Sleep 5000
+
 ' Start Backend
-WshShell.CurrentDirectory = "D:\zambianew\Zambia_Project\backend"
-WshShell.Run "cmd /c npm start", 0, False
+WshShell.Run "cmd /c cd /d ""C:\school ERP\newzambia\backend"" && npm start",0, False
+
+WScript.Sleep 3000
 
 ' Start Frontend
-WshShell.CurrentDirectory = "D:\zambianew\Zambia_Project\frontend"
-WshShell.Run "cmd /c npm run dev", 0, False
+WshShell.Run "cmd /c cd /d ""C:\school ERP\newzambia\frontend"" && npm run dev",0, False
