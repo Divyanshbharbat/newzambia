@@ -66,9 +66,13 @@ router.post("/students", async (req, res) => {
         return res.status(400).json({ error: "Roll Number is required." });
     }
 
+    if (!standard || !standard.trim()) {
+        return res.status(400).json({ error: "Standard / Class is required." });
+    }
+
     const session = req.session || "2026-2027";
     const college = req.college || "svpcet";
-    const std = (standard && standard.trim()) ? standard.trim() : "1st";
+    const std = standard.trim();
     const finalRollNo = parseInt(rollNo);
 
     try {
@@ -101,7 +105,7 @@ router.post("/students", async (req, res) => {
         });
 
         if (existingStudent) {
-            return res.status(400).json({ error: `Roll Number ${finalRollNo} already exists for Class '${std}'.` });
+            return res.status(400).json({ error: `Roll Number ${finalRollNo} already exists for Class '${finalStandard}'.` });
         }
 
         const validGender = (gender === "Female" || gender === "Male") ? gender : "Male";
@@ -126,20 +130,28 @@ router.post("/students", async (req, res) => {
         const globalLunchFee = controlSettings ? controlSettings.lunchFee : null;
 
         const validParents = Array.isArray(parents) 
-            ? parents.filter(p => p && (p.fatherName || p.motherName || p.fatherContact || p.motherContact)).map((p) => ({
-                fatherName: p.fatherName || "N/A",
-                motherName: p.motherName || "N/A",
+            ? parents.filter(p => p && (
+                (p.fatherName && p.fatherName.trim()) || 
+                (p.motherName && p.motherName.trim()) || 
+                (p.fatherContact && !isNaN(parseInt(p.fatherContact)) && parseInt(p.fatherContact) !== 0) || 
+                (p.motherContact && !isNaN(parseInt(p.motherContact)) && parseInt(p.motherContact) !== 0)
+              )).map((p) => ({
+                fatherName: (p.fatherName && p.fatherName.trim()) ? p.fatherName.trim() : "N/A",
+                motherName: (p.motherName && p.motherName.trim()) ? p.motherName.trim() : "N/A",
                 fatherContact: p.fatherContact && !isNaN(parseInt(p.fatherContact)) ? parseInt(p.fatherContact) : 0,
                 motherContact: p.motherContact && !isNaN(parseInt(p.motherContact)) ? parseInt(p.motherContact) : 0,
                 distanceFromSchool: p.distanceFromSchool && !isNaN(parseFloat(p.distanceFromSchool)) ? parseFloat(p.distanceFromSchool) : null,
                 preferredPhoneNumber: p.preferredPhoneNumber && !isNaN(parseInt(p.preferredPhoneNumber)) ? parseInt(p.preferredPhoneNumber) : null,
-                address: p.address || "N/A",
+                address: (p.address && p.address.trim()) ? p.address.trim() : "N/A",
             }))
             : [];
 
         const validFees = Array.isArray(fees)
-            ? fees.filter(f => f && (f.installmentType || f.amount)).map((f) => ({
-                title: f.installmentType || "General Fee",
+            ? fees.filter(f => f && (
+                (f.installmentType && f.installmentType.trim()) || 
+                (f.amount && !isNaN(parseFloat(f.amount)) && parseFloat(f.amount) > 0)
+              )).map((f) => ({
+                title: (f.installmentType && f.installmentType.trim()) ? f.installmentType.trim() : "General Fee",
                 amount: f.amount && !isNaN(parseFloat(f.amount)) ? parseFloat(f.amount) : 0,
                 amountDate: f.amountDate && !isNaN(new Date(f.amountDate).getTime()) ? new Date(f.amountDate) : new Date(),
                 admissionDate: f.admissionDate && !isNaN(new Date(f.admissionDate).getTime()) ? new Date(f.admissionDate) : new Date(),
@@ -154,22 +166,22 @@ router.post("/students", async (req, res) => {
                 dateOfBirth: dob,
                 rollNo: finalRollNo,
                 standard: finalStandard,
-                bloodGroup: bloodGroup || null,
+                bloodGroup: (bloodGroup && bloodGroup.trim()) ? bloodGroup.trim() : null,
                 scholarshipApplied: scholarshipApplied || false,
                 lunchAccepted: lunchAccepted || false,
                 lunchPrice: lunchAccepted ? (globalLunchFee ?? (lunchPrice ? parseFloat(lunchPrice) : null)) : null,
                 busAccepted: busAccepted || false,
                 busStationId: busAccepted && busStationId ? parseInt(busStationId) : null,
                 busPrice: busPriceValue,
-                residentialAddress: residentialAddress || null,
-                correspondenceAddress: correspondenceAddress || null,
-                photoUrl: photoUrl || null,
-                remark: remark || null,
-                nationality: nationality || null,
-                religion: religion || null,
-                denomination: denomination || null,
-                language: language || null,
-                motherTongue: motherTongue || null,
+                residentialAddress: (residentialAddress && residentialAddress.trim()) ? residentialAddress.trim() : null,
+                correspondenceAddress: (correspondenceAddress && correspondenceAddress.trim()) ? correspondenceAddress.trim() : null,
+                photoUrl: (photoUrl && photoUrl.trim()) ? photoUrl.trim() : null,
+                remark: (remark && remark.trim()) ? remark.trim() : null,
+                nationality: (nationality && nationality.trim()) ? nationality.trim() : null,
+                religion: (religion && religion.trim()) ? religion.trim() : null,
+                denomination: (denomination && denomination.trim()) ? denomination.trim() : null,
+                language: (language && language.trim()) ? language.trim() : null,
+                motherTongue: (motherTongue && motherTongue.trim()) ? motherTongue.trim() : null,
                 session,
                 college,
                 parents: {
@@ -498,22 +510,24 @@ router.put("/update/student/:id", async (req, res) => {
         });
 
         // Update parent details
-        const updatedParents = await Promise.all(
-            parents.map((parent) =>
-                prisma.parent.update({
-                    where: { id: parent.id },
-                    data: {
-                        fatherName: parent.fatherName,
-                        motherName: parent.motherName,
-                        fatherContact: parent.fatherContact,
-                        motherContact: parent.motherContact,
-                        distanceFromSchool: parent.distanceFromSchool ? parseFloat(parent.distanceFromSchool) : null,
-                        preferredPhoneNumber: parent.preferredPhoneNumber ? parseInt(parent.preferredPhoneNumber) : null,
-                        address: parent.address,
-                    },
-                })
+        const updatedParents = Array.isArray(parents)
+            ? await Promise.all(
+                parents.map((parent) =>
+                    prisma.parent.update({
+                        where: { id: parent.id },
+                        data: {
+                            fatherName: parent.fatherName,
+                            motherName: parent.motherName,
+                            fatherContact: parent.fatherContact,
+                            motherContact: parent.motherContact,
+                            distanceFromSchool: parent.distanceFromSchool ? parseFloat(parent.distanceFromSchool) : null,
+                            preferredPhoneNumber: parent.preferredPhoneNumber ? parseInt(parent.preferredPhoneNumber) : null,
+                            address: parent.address,
+                        },
+                    })
+                )
             )
-        );
+            : [];
 
         const response = {
             message: "Student updated successfully",

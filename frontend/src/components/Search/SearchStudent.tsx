@@ -262,7 +262,7 @@ const SearchStudent: React.FC = () => {
             }),
             new Paragraph({ text: "" }), 
             
-            ...searchResult.parents.map((parent) => [
+            ...(searchResult.parents || []).map((parent) => [
               new Paragraph({
                 alignment: AlignmentType.LEFT,
                 spacing: { before: 300, after: 200 },
@@ -590,7 +590,7 @@ const SearchStudent: React.FC = () => {
               <div className="profile-section">
                 <h4>Parents Information</h4>
                 <div style={{marginLeft:"10px"}}>
-                  {searchResult.parents.map((parent) => (
+                  {(searchResult.parents || []).map((parent) => (
                     <div key={parent.id}>
                       <section style={{display:"flex"}}>
                         <section>
@@ -795,7 +795,7 @@ const SearchStudent: React.FC = () => {
             </div>
 
             <h4>Edit Parents Information</h4>
-            {editableStudent.parents.map((parent, index) => (
+            {(editableStudent.parents || []).map((parent, index) => (
               <div key={parent.id}>
                 <div>
                   <label>Father Name:</label>

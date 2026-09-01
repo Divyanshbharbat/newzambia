@@ -249,6 +249,10 @@ const Student: React.FC = () => {
       alert("Roll Number is required.");
       return;
     }
+    if (!student.standard || !student.standard.trim()) {
+      alert("Standard / Class is required. Please select a Category and Standard.");
+      return;
+    }
     try {
       // prepare inventory selections
       const inventorySelections = Object.entries(selectedInventory)

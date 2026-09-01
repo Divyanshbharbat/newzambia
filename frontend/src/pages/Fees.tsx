@@ -94,13 +94,13 @@ const Fees: React.FC = () => {
 
     const updatedInstallment = {
       ...newInstallment,
-      admissionDate: student.fees[0]?.admissionDate ?? new Date(),
+      admissionDate: student.fees?.[0]?.admissionDate ?? new Date(),
       studentId: student.id,
     };
     
     try {
       let check = false;
-      student.fees.forEach((e : any) =>{
+      (student.fees || []).forEach((e : any) =>{
        
           if(e.title === updatedInstallment.title){
             
@@ -203,7 +203,7 @@ const Fees: React.FC = () => {
             <h3>Roll No: {student.rollNo}</h3>
             <h3>Standard: {student.standard}</h3>
             <h3>Fees:</h3>
-            {student.fees.map((fee, index) => (
+            {(student.fees || []).map((fee, index) => (
               <div key={index} style={{ marginBottom: '10px', padding: '15px' , backgroundColor:"#E0E0E0",border:"1px solid black" }}>
                 <h4>Title: {fee.title}</h4>
                 <p>Amount: {fee.amount}</p>

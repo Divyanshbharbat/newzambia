@@ -195,12 +195,36 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
   try {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(filePath);
+    const isCsv = filePath.toLowerCase().endsWith('.csv') || (req.file.mimetype && req.file.mimetype.includes('csv'));
+    if (isCsv) {
+      await workbook.csv.readFile(filePath);
+    } else {
+      await workbook.xlsx.readFile(filePath);
+    }
     const worksheet = workbook.getWorksheet(1);
+    if (!worksheet) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "Uploaded worksheet is empty." });
+    }
+
+    const targetCollege = req.college || 'svpcet';
+
+    // Verify classes (Standards) exist in database for targetCollege upfront
+    const dbStandards = await prisma.standards.findMany({
+      where: { college: targetCollege }
+    });
+
+    if (dbStandards.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({
+        error: "No classes (standards) found in the database. Please add classes first before uploading students."
+      });
+    }
 
     const students = [];
 
     const getVal = (row, colIndex) => {
+      if (!colIndex) return null;
       const cell = row.getCell(colIndex);
       if (!cell || cell.value === null || cell.value === undefined) return null;
       let v = cell.value;
@@ -213,103 +237,243 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       return v;
     };
 
-    worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber !== 1) {
-        const rawName = getVal(row, 1);
-        if (!rawName) return; // skip rows without name
-        const fullName = String(rawName).trim();
-        if (!fullName) return;
+    // Comprehensive header aliases for fuzzy matching
+    const headerAliases = {
+      fullName: ['full name', 'fullname', 'name', 'student name', 'studentname', 'student', 'name of student', 'student_name', 'names', 'name of the student'],
+      standard: ['standard', 'class', 'std', 'grade', 'standard / class', 'class / standard', 'grade / standard', 'sec / std', 'std / sec', 'standards', 'classes', 'grades', 'form'],
+      rollNo: ['roll no', 'rollno', 'roll number', 'roll_no', 'roll', 'roll#', 'roll_number', 'sr_no', 'sr.no', 'sr no', 's.no', 's.no.', 'sno', 'srno', 'rno', 'r.no', 'id', 'student id', 'student_id', 'serial no', 'sl no', 'slno', 'roll_num'],
+      gender: ['gender', 'sex'],
+      dateOfBirth: ['date of birth', 'dob', 'birth date', 'birthdate'],
+      bloodGroup: ['blood group', 'bloodgroup', 'bg'],
+      scholarshipApplied: ['scholarship applied', 'scholarship', 'scholarship_applied'],
+      residentialAddress: ['residential address', 'residential_address', 'residence'],
+      correspondenceAddress: ['correspondence address', 'correspondence_address'],
+      nationality: ['nationality'],
+      religion: ['religion'],
+      denomination: ['denomination'],
+      language: ['language'],
+      motherTongue: ['mother tongue', 'mothertongue', 'mother_tongue'],
+      photoUrl: ['photo url', 'photo_url', 'photo'],
+      fatherName: ['father name', 'father_name', 'father'],
+      motherName: ['mother name', 'mother_name', 'mother'],
+      fatherContact: ['father contact', 'father_contact', 'father phone'],
+      motherContact: ['mother contact', 'mother_contact', 'mother phone'],
+      distanceFromSchool: ['distance from school (km)', 'distance from school', 'distance'],
+      preferredPhoneNumber: ['preferred phone number', 'preferred phone', 'preferred_phone'],
+      address: ['address'],
+      feeTitle: ['fee title', 'fee_title'],
+      feeAmount: ['fee amount', 'fee_amount'],
+      feeAmountDate: ['fee amount date', 'fee_amount_date'],
+      admissionDate: ['admission date', 'admission_date'],
+      remark: ['remark', 'remarks'],
+      session: ['session']
+    };
 
-        const genderRaw = getVal(row, 2);
-        const genderStr = genderRaw ? String(genderRaw).trim().toLowerCase() : 'male';
-        const gender = (genderStr === 'female' || genderStr === 'f') ? 'Female' : 'Male';
+    const firstRow = worksheet.getRow(1);
+    const colMap = {};
+    let hasHeaderRow = false;
 
-        const dobRaw = getVal(row, 3);
-        let dateOfBirth = dobRaw ? new Date(dobRaw) : new Date();
-        if (isNaN(dateOfBirth.getTime())) dateOfBirth = new Date();
+    if (firstRow) {
+      firstRow.eachCell((cell, colNumber) => {
+        if (!cell || cell.value === null || cell.value === undefined) return;
+        const strVal = String(cell.value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        for (const [field, aliases] of Object.entries(headerAliases)) {
+          if (!colMap[field]) {
+            const match = aliases.some(alias => alias.toLowerCase().replace(/[^a-z0-9]/g, '') === strVal);
+            if (match) {
+              colMap[field] = colNumber;
+              hasHeaderRow = true;
+            }
+          }
+        }
+      });
+    }
 
-        const rollNoRaw = getVal(row, 4);
-        const rollNo = rollNoRaw ? parseInt(rollNoRaw) || 0 : 0;
-
-        const standardRaw = getVal(row, 5);
-        const standard = standardRaw ? String(standardRaw).trim() : '1st';
-
-        const bloodGroupRaw = getVal(row, 6);
-        const bloodGroup = bloodGroupRaw ? String(bloodGroupRaw).trim() : null;
-
-        const scholarshipRaw = getVal(row, 7);
-        const scholarshipApplied = scholarshipRaw ? (String(scholarshipRaw).toLowerCase() === "true" || String(scholarshipRaw).toLowerCase() === "yes") : false;
-
-        const residentialAddress = getVal(row, 8) ? String(getVal(row, 8)).trim() : null;
-        const correspondenceAddress = getVal(row, 9) ? String(getVal(row, 9)).trim() : null;
-        const nationality = getVal(row, 10) ? String(getVal(row, 10)).trim() : null;
-        const religion = getVal(row, 11) ? String(getVal(row, 11)).trim() : null;
-        const denomination = getVal(row, 12) ? String(getVal(row, 12)).trim() : null;
-        const language = getVal(row, 13) ? String(getVal(row, 13)).trim() : null;
-        const motherTongue = getVal(row, 14) ? String(getVal(row, 14)).trim() : null;
-        const photoUrl = getVal(row, 15) ? String(getVal(row, 15)).trim() : null;
-
-        const fatherName = getVal(row, 16) ? String(getVal(row, 16)).trim() : null;
-        const motherName = getVal(row, 17) ? String(getVal(row, 17)).trim() : null;
-        const fatherContactRaw = getVal(row, 18);
-        const motherContactRaw = getVal(row, 19);
-        const distanceFromSchool = getVal(row, 20) ? parseFloat(getVal(row, 20)) : null;
-        const preferredPhoneRaw = getVal(row, 21);
-        const address = getVal(row, 22) ? String(getVal(row, 22)).trim() : null;
-
-        const parents = (fatherName || motherName || fatherContactRaw || motherContactRaw) ? [{
-          fatherName: fatherName || 'N/A',
-          motherName: motherName || 'N/A',
-          fatherContact: fatherContactRaw && !isNaN(parseInt(fatherContactRaw)) ? BigInt(parseInt(fatherContactRaw)) : BigInt(0),
-          motherContact: motherContactRaw && !isNaN(parseInt(motherContactRaw)) ? BigInt(parseInt(motherContactRaw)) : BigInt(0),
-          distanceFromSchool: isNaN(distanceFromSchool) ? null : distanceFromSchool,
-          preferredPhoneNumber: preferredPhoneRaw && !isNaN(parseInt(preferredPhoneRaw)) ? BigInt(parseInt(preferredPhoneRaw)) : null,
-          address: address || 'N/A',
-        }] : [];
-
-        const feeTitle = getVal(row, 23) ? String(getVal(row, 23)).trim() : null;
-        const feeAmountRaw = getVal(row, 24);
-        const feeAmount = feeAmountRaw ? parseFloat(feeAmountRaw) || 0 : 0;
-        const feeAmountDateRaw = getVal(row, 25);
-        let amountDate = feeAmountDateRaw ? new Date(feeAmountDateRaw) : new Date();
-        if (isNaN(amountDate.getTime())) amountDate = new Date();
-
-        const admissionDateRaw = getVal(row, 26);
-        let admissionDate = admissionDateRaw ? new Date(admissionDateRaw) : new Date();
-        if (isNaN(admissionDate.getTime())) admissionDate = new Date();
-
-        const fees = feeTitle ? [{
-          title: feeTitle,
-          amount: feeAmount,
-          amountDate,
-          admissionDate
-        }] : [];
-
-        const remark = getVal(row, 27) ? String(getVal(row, 27)).trim() : null;
-        const session = getVal(row, 28) ? String(getVal(row, 28)).trim() : (req.session || '2026-2027');
-
-        students.push({
-          fullName,
-          gender,
-          dateOfBirth,
-          rollNo,
-          standard,
-          bloodGroup,
-          scholarshipApplied,
-          residentialAddress,
-          correspondenceAddress,
-          nationality,
-          religion,
-          denomination,
-          language,
-          motherTongue,
-          photoUrl,
-          parents,
-          fees,
-          remark,
-          session
+    // Auto-detect columns if required fields (fullName, standard, rollNo) are not all mapped
+    if (!colMap.fullName || !colMap.standard || !colMap.rollNo) {
+      const sampleRowNumber = hasHeaderRow ? 2 : 1;
+      const sampleRow = worksheet.getRow(sampleRowNumber);
+      const populatedCols = [];
+      if (sampleRow) {
+        sampleRow.eachCell((cell, colNumber) => {
+          const val = getVal(sampleRow, colNumber);
+          if (val !== null && val !== undefined && String(val).trim() !== '') {
+            populatedCols.push({ colNumber, val: String(val).trim() });
+          }
         });
       }
+
+      if (populatedCols.length >= 2 && populatedCols.length <= 6) {
+        let foundStd = colMap.standard || null;
+        let foundRoll = colMap.rollNo || null;
+        let foundName = colMap.fullName || null;
+
+        for (const item of populatedCols) {
+          const cNum = item.colNumber;
+          const v = item.val;
+
+          // Check standard match against DB standards or pattern (1st, 2nd, Grade 1, Class 2, Std 5, etc.)
+          const isStdMatch = !!findMatchingStandard(v, dbStandards) || /(\d+)(st|nd|rd|th)|grade|class|std|form/i.test(v);
+          const isPureNum = !isNaN(parseInt(v)) && String(parseInt(v)) === v;
+
+          if (isStdMatch && !foundStd) {
+            foundStd = cNum;
+          } else if (isPureNum && !foundRoll) {
+            foundRoll = cNum;
+          } else if (!isStdMatch && !isPureNum && !foundName) {
+            foundName = cNum;
+          }
+        }
+
+        const remainingCols = populatedCols.map(p => p.colNumber).filter(c => c !== foundStd && c !== foundRoll && c !== foundName);
+        if (!foundStd && remainingCols.length > 0) foundStd = remainingCols.shift();
+        if (!foundName && remainingCols.length > 0) foundName = remainingCols.shift();
+        if (!foundRoll && remainingCols.length > 0) foundRoll = remainingCols.shift();
+
+        if (foundStd) colMap.standard = foundStd;
+        if (foundName) colMap.fullName = foundName;
+        if (foundRoll) colMap.rollNo = foundRoll;
+      }
+
+      // Default fallback for 28-column standard layout if still missing
+      if (!colMap.fullName) colMap.fullName = 1;
+      if (!colMap.gender) colMap.gender = 2;
+      if (!colMap.dateOfBirth) colMap.dateOfBirth = 3;
+      if (!colMap.rollNo) colMap.rollNo = 4;
+      if (!colMap.standard) colMap.standard = 5;
+      if (!colMap.bloodGroup) colMap.bloodGroup = 6;
+      if (!colMap.scholarshipApplied) colMap.scholarshipApplied = 7;
+      if (!colMap.residentialAddress) colMap.residentialAddress = 8;
+      if (!colMap.correspondenceAddress) colMap.correspondenceAddress = 9;
+      if (!colMap.nationality) colMap.nationality = 10;
+      if (!colMap.religion) colMap.religion = 11;
+      if (!colMap.denomination) colMap.denomination = 12;
+      if (!colMap.language) colMap.language = 13;
+      if (!colMap.motherTongue) colMap.motherTongue = 14;
+      if (!colMap.photoUrl) colMap.photoUrl = 15;
+      if (!colMap.fatherName) colMap.fatherName = 16;
+      if (!colMap.motherName) colMap.motherName = 17;
+      if (!colMap.fatherContact) colMap.fatherContact = 18;
+      if (!colMap.motherContact) colMap.motherContact = 19;
+      if (!colMap.distanceFromSchool) colMap.distanceFromSchool = 20;
+      if (!colMap.preferredPhoneNumber) colMap.preferredPhoneNumber = 21;
+      if (!colMap.address) colMap.address = 22;
+      if (!colMap.feeTitle) colMap.feeTitle = 23;
+      if (!colMap.feeAmount) colMap.feeAmount = 24;
+      if (!colMap.feeAmountDate) colMap.feeAmountDate = 25;
+      if (!colMap.admissionDate) colMap.admissionDate = 26;
+      if (!colMap.remark) colMap.remark = 27;
+      if (!colMap.session) colMap.session = 28;
+    }
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (hasHeaderRow && rowNumber === 1) return; // skip header row
+
+      // If row 1 wasn't detected as header, but contains header words like "Name", "Standard", "Roll No", skip row 1
+      if (rowNumber === 1 && !hasHeaderRow) {
+        const c1Val = String(getVal(row, 1) || '').trim().toLowerCase();
+        const c2Val = String(getVal(row, 2) || '').trim().toLowerCase();
+        if (c1Val === 'name' || c1Val === 'standard' || c1Val === 'class' || c1Val === 'roll no' || c2Val === 'name' || c2Val === 'standard') {
+          return;
+        }
+      }
+
+      const rawName = getVal(row, colMap.fullName);
+      if (!rawName) return; // skip rows without name
+      const fullName = String(rawName).trim();
+      if (!fullName) return;
+
+      const genderRaw = colMap.gender ? getVal(row, colMap.gender) : null;
+      const genderStr = genderRaw ? String(genderRaw).trim().toLowerCase() : 'male';
+      const gender = (genderStr === 'female' || genderStr === 'f') ? 'Female' : 'Male';
+
+      const dobRaw = colMap.dateOfBirth ? getVal(row, colMap.dateOfBirth) : null;
+      let dateOfBirth = dobRaw ? new Date(dobRaw) : new Date();
+      if (isNaN(dateOfBirth.getTime())) dateOfBirth = new Date();
+
+      const rollNoRaw = colMap.rollNo ? getVal(row, colMap.rollNo) : null;
+      const rollNo = rollNoRaw ? parseInt(rollNoRaw) || 0 : 0;
+
+      const standardRaw = colMap.standard ? getVal(row, colMap.standard) : null;
+      const standard = standardRaw ? String(standardRaw).trim() : '1st';
+
+      const bloodGroupRaw = colMap.bloodGroup ? getVal(row, colMap.bloodGroup) : null;
+      const bloodGroup = bloodGroupRaw ? String(bloodGroupRaw).trim() : null;
+
+      const scholarshipRaw = colMap.scholarshipApplied ? getVal(row, colMap.scholarshipApplied) : null;
+      const scholarshipApplied = scholarshipRaw ? (String(scholarshipRaw).toLowerCase() === "true" || String(scholarshipRaw).toLowerCase() === "yes") : false;
+
+      const residentialAddress = colMap.residentialAddress && getVal(row, colMap.residentialAddress) ? String(getVal(row, colMap.residentialAddress)).trim() : null;
+      const correspondenceAddress = colMap.correspondenceAddress && getVal(row, colMap.correspondenceAddress) ? String(getVal(row, colMap.correspondenceAddress)).trim() : null;
+      const nationality = colMap.nationality && getVal(row, colMap.nationality) ? String(getVal(row, colMap.nationality)).trim() : null;
+      const religion = colMap.religion && getVal(row, colMap.religion) ? String(getVal(row, colMap.religion)).trim() : null;
+      const denomination = colMap.denomination && getVal(row, colMap.denomination) ? String(getVal(row, colMap.denomination)).trim() : null;
+      const language = colMap.language && getVal(row, colMap.language) ? String(getVal(row, colMap.language)).trim() : null;
+      const motherTongue = colMap.motherTongue && getVal(row, colMap.motherTongue) ? String(getVal(row, colMap.motherTongue)).trim() : null;
+      const photoUrl = colMap.photoUrl && getVal(row, colMap.photoUrl) ? String(getVal(row, colMap.photoUrl)).trim() : null;
+
+      const fatherName = colMap.fatherName && getVal(row, colMap.fatherName) ? String(getVal(row, colMap.fatherName)).trim() : null;
+      const motherName = colMap.motherName && getVal(row, colMap.motherName) ? String(getVal(row, colMap.motherName)).trim() : null;
+      const fatherContactRaw = colMap.fatherContact ? getVal(row, colMap.fatherContact) : null;
+      const motherContactRaw = colMap.motherContact ? getVal(row, colMap.motherContact) : null;
+      const distanceFromSchoolRaw = colMap.distanceFromSchool ? getVal(row, colMap.distanceFromSchool) : null;
+      const distanceFromSchool = distanceFromSchoolRaw ? parseFloat(distanceFromSchoolRaw) : null;
+      const preferredPhoneRaw = colMap.preferredPhoneNumber ? getVal(row, colMap.preferredPhoneNumber) : null;
+      const address = colMap.address && getVal(row, colMap.address) ? String(getVal(row, colMap.address)).trim() : null;
+
+      const parents = (fatherName || motherName || fatherContactRaw || motherContactRaw) ? [{
+        fatherName: fatherName || 'N/A',
+        motherName: motherName || 'N/A',
+        fatherContact: fatherContactRaw && !isNaN(parseInt(fatherContactRaw)) ? BigInt(parseInt(fatherContactRaw)) : BigInt(0),
+        motherContact: motherContactRaw && !isNaN(parseInt(motherContactRaw)) ? BigInt(parseInt(motherContactRaw)) : BigInt(0),
+        distanceFromSchool: (distanceFromSchool && !isNaN(distanceFromSchool)) ? distanceFromSchool : null,
+        preferredPhoneNumber: preferredPhoneRaw && !isNaN(parseInt(preferredPhoneRaw)) ? BigInt(parseInt(preferredPhoneRaw)) : null,
+        address: address || 'N/A',
+      }] : [];
+
+      const feeTitle = colMap.feeTitle && getVal(row, colMap.feeTitle) ? String(getVal(row, colMap.feeTitle)).trim() : null;
+      const feeAmountRaw = colMap.feeAmount ? getVal(row, colMap.feeAmount) : null;
+      const feeAmount = feeAmountRaw ? parseFloat(feeAmountRaw) || 0 : 0;
+      const feeAmountDateRaw = colMap.feeAmountDate ? getVal(row, colMap.feeAmountDate) : null;
+      let amountDate = feeAmountDateRaw ? new Date(feeAmountDateRaw) : new Date();
+      if (isNaN(amountDate.getTime())) amountDate = new Date();
+
+      const admissionDateRaw = colMap.admissionDate ? getVal(row, colMap.admissionDate) : null;
+      let admissionDate = admissionDateRaw ? new Date(admissionDateRaw) : new Date();
+      if (isNaN(admissionDate.getTime())) admissionDate = new Date();
+
+      const fees = (feeTitle || feeAmount > 0) ? [{
+        title: feeTitle || 'General Fee',
+        amount: feeAmount,
+        amountDate,
+        admissionDate
+      }] : [];
+
+      const remark = colMap.remark && getVal(row, colMap.remark) ? String(getVal(row, colMap.remark)).trim() : null;
+      const sessionRaw = colMap.session ? getVal(row, colMap.session) : null;
+      const session = sessionRaw ? String(sessionRaw).trim() : (req.session || '2026-2027');
+
+      students.push({
+        fullName,
+        gender,
+        dateOfBirth,
+        rollNo,
+        standard,
+        bloodGroup,
+        scholarshipApplied,
+        residentialAddress,
+        correspondenceAddress,
+        nationality,
+        religion,
+        denomination,
+        language,
+        motherTongue,
+        photoUrl,
+        parents,
+        fees,
+        remark,
+        session
+      });
     });
 
     const results = {
@@ -323,26 +487,11 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "No student records found in the uploaded file." });
     }
 
-    const targetCollege = req.college || 'svpcet';
-
-    // Verify classes (Standards) exist in database for targetCollege
-    const dbStandards = await prisma.standards.findMany({
-      where: { college: targetCollege }
-    });
-
-    if (dbStandards.length === 0) {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      return res.status(400).json({
-        error: "No classes (standards) found in the database. Please add classes first before uploading students."
-      });
-    }
-
     const missingClasses = new Set();
 
     for (const student of students) {
       const matched = findMatchingStandard(student.standard, dbStandards);
       if (matched) {
-        // Map to exact canonical standard string stored in DB
         student.standard = matched.std;
       } else {
         missingClasses.add(student.standard || "Unassigned");

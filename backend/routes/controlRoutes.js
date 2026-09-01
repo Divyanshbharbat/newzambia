@@ -375,7 +375,7 @@ const promotionData = {
               remark: "",  
               status: "None",  
               parents: {
-                create: oldStudent.parents.map((parent) => ({
+                create: (oldStudent.parents || []).map((parent) => ({
                   fatherName: parent.fatherName,
                   fatherOccupation: parent.fatherOccupation,
                   motherName: parent.motherName,
