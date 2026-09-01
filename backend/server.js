@@ -142,8 +142,105 @@ app.use("/api", dashboard);
 // Start server
 
 
-// Start server
+// Ensure database and tables are present before starting server
+const { execSync } = require("child_process");
+
+async function checkAndInitializeDatabase() {
+    try {
+        await prisma.$queryRaw`SELECT 1 FROM "Student" LIMIT 1`;
+        console.log("✓ Database and all tables are already present in PostgreSQL.");
+    } catch (err) {
+        console.log("⚠ Database or tables missing. Creating database and tables in PostgreSQL...");
+        try {
+            execSync("npx prisma db push", { stdio: "inherit" });
+            console.log("✓ Database and tables created successfully.");
+        } catch (pushErr) {
+            console.error("✗ Failed to auto-create database/tables:", pushErr.message);
+        }
+    }
+
+    // Ensure Admin user and initial college / categories exist in database
+    try {
+        const collegeName = "svpcet";
+        const adminUsername = "admin";
+        const adminPassword = "adminpassword";
+
+        const existingAdmin = await prisma.user.findFirst({
+            where: { username: adminUsername, college: collegeName }
+        });
+
+        if (!existingAdmin) {
+            console.log("⚠ Admin details not found in database. Seeding initial admin data...");
+
+            await prisma.college.upsert({
+                where: { name: collegeName },
+                update: {},
+                create: { name: collegeName },
+            });
+
+            await prisma.user.upsert({
+                where: {
+                    username_college: {
+                        username: adminUsername,
+                        college: collegeName
+                    }
+                },
+                update: {
+                    password: adminPassword,
+                    role: "admin"
+                },
+                create: {
+                    username: adminUsername,
+                    password: adminPassword,
+                    role: "admin",
+                    college: collegeName
+                }
+            });
+
+            const categories = ['Kindergarten', 'Primary', 'Junior Secondary', 'Senior Secondary'];
+            for (const cat of categories) {
+                await prisma.standardCategory.upsert({
+                    where: {
+                        name_college: {
+                            name: cat,
+                            college: collegeName
+                        }
+                    },
+                    update: {},
+                    create: {
+                        name: cat,
+                        college: collegeName
+                    }
+                });
+            }
+
+            await prisma.session.upsert({
+                where: {
+                    year_college: {
+                        year: '2026-2027',
+                        college: collegeName
+                    }
+                },
+                update: {},
+                create: {
+                    year: '2026-2027',
+                    college: collegeName
+                }
+            });
+
+            console.log("✓ Admin user ('admin' / 'adminpassword'), college ('svpcet'), and default categories seeded successfully.");
+        } else {
+            console.log("✓ Admin details are already present in database.");
+        }
+    } catch (seedErr) {
+        console.error("✗ Error checking/seeding admin details:", seedErr.message);
+    }
+}
+
 const HOST = '0.0.0.0';
-app.listen(5000, HOST, () => {
-    console.log(`Server is running on http://${HOST}:5000 (accessible at http://192.168.137.40:5000)`);
+
+checkAndInitializeDatabase().then(() => {
+    app.listen(5000, HOST, () => {
+        console.log(`Server is running on http://${HOST}:5000`);
+    });
 });

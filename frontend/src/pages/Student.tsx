@@ -240,21 +240,13 @@ const Student: React.FC = () => {
   
 
   const handleSubmit = async () => {
-    // Validation
-    if (!student.fullName) { alert("Student Full Name is required."); return; }
-    if (!student.rollNo) { alert("Roll Number is required."); return; }
-    if (!student.standard) { alert("Please select a Class (Standard)."); return; }
-    if (!student.dateOfBirth) { alert("Date of Birth is required."); return; }
-
-    for (const [index, parent] of student.parents.entries()) {
-      if (!parent.fatherName) { alert(`Father's Name is missing for parent entry ${index + 1}`); return; }
-      if (!parent.fatherContact) { alert(`Father's Contact Number is missing for parent entry ${index + 1}`); return; }
-      if (!parent.motherName) { alert(`Mother's Name is missing for parent entry ${index + 1}`); return; }
-      if (!parent.motherContact) { alert(`Mother's Contact Number is missing for parent entry ${index + 1}`); return; }
+    // Validation: Student Full Name and Roll Number are required
+    if (!student.fullName || !student.fullName.trim()) { 
+      alert("Student Full Name is required."); 
+      return; 
     }
-
-    if (student.fees.some((fee) => !fee.installmentType || !fee.amountDate)) {
-      alert("Please fill all fee installment details (Type and Date).");
+    if (!student.rollNo || !student.rollNo.toString().trim()) {
+      alert("Roll Number is required.");
       return;
     }
     try {
@@ -266,9 +258,9 @@ const Student: React.FC = () => {
       await createStudent(({ ...student, inventorySelections } as any));
       alert("Student created successfully");
       resetForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Failed to create student");
+      alert(error.response?.data?.error || error.message || "Failed to create student");
     }
   };
 

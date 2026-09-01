@@ -21,9 +21,23 @@ const Login: React.FC<LoginProps> = ({ setAuth, setIsLoading, availableColleges 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "teacher">("admin");
-  const [college, setCollege] = useState("");
+  const [college, setCollege] = useState("svpcet");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  React.useEffect(() => {
+    if (availableColleges && availableColleges.length > 0) {
+      const hasSvpcet = availableColleges.some((c: any) => (typeof c === 'string' ? c : c?.name || '').toLowerCase() === 'svpcet');
+      if (hasSvpcet) {
+        setCollege("svpcet");
+      } else if (!college) {
+        const firstCol = availableColleges[0] as any;
+        setCollege(typeof firstCol === 'string' ? firstCol : firstCol?.name || 'svpcet');
+      }
+    } else {
+      setCollege("svpcet");
+    }
+  }, [availableColleges]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,30 +270,22 @@ const Login: React.FC<LoginProps> = ({ setAuth, setIsLoading, availableColleges 
                 <div className="input-icon" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
                   <School size={16} />
                 </div>
-                <select 
-                  value={college}
-                  onChange={(e) => setCollege(e.target.value)}
+                <input 
+                  type="text"
+                  value="svpcet"
+                  readOnly
                   style={{ 
                     width: "100%", 
                     padding: "12px 12px 12px 36px", 
                     borderRadius: "12px", 
                     border: "1.5px solid #e2e8f0",
                     backgroundColor: "#fcfdfe",
-                    color: college ? "#1e293b" : "#94a3b8",
-                    cursor: "pointer",
-                    outline: "none",
+                    color: "#1e293b",
                     fontWeight: "500",
-                    appearance: "none",
+                    outline: "none",
                     fontSize: "14px"
                   }}
-                >
-                  <option value="" disabled>Select</option>
-                  {availableColleges.map((col: any) => (
-                    <option key={typeof col === 'string' ? col : col.id} value={typeof col === 'string' ? col : col.name}>
-                      {typeof col === 'string' ? col : col.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
           </div>

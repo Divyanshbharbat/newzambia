@@ -187,93 +187,171 @@ router.post('/uploadPhoto', upload.single('file'), async (req, res) => {
 
 // Upload Student In Bulk with Excel
 router.post("/upload", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
   const filePath = req.file.path;
 
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.getWorksheet(1);
-
-  const students = [];
-
-  worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber !== 1) {
-      // Skip header row
-      const student = {
-        fullName: row.getCell(1).value,
-        gender: row.getCell(2).value,
-        dateOfBirth: row.getCell(3).value,
-        rollNo: parseInt(row.getCell(4).value),
-        standard: row.getCell(5).value,
-        bloodGroup: row.getCell(6).value,
-        scholarshipApplied: row.getCell(7).value.toString().toLowerCase() === "true" || row.getCell(7).value.toString().toLowerCase() === "yes",
-        residentialAddress: row.getCell(8).value,
-        correspondenceAddress: row.getCell(9).value,
-        nationality: row.getCell(10).value,
-        religion: row.getCell(11).value,
-        denomination: row.getCell(12).value,
-        language: row.getCell(13).value,
-        motherTongue: row.getCell(14).value,
-        photoUrl: row.getCell(15).value,
-        parents: [
-          {
-            fatherName: row.getCell(16).value,
-            motherName: row.getCell(17).value,
-            fatherContact: BigInt(row.getCell(18).value),
-            motherContact: BigInt(row.getCell(19).value),
-            distanceFromSchool: row.getCell(20).value ? parseFloat(row.getCell(20).value) : null,
-            preferredPhoneNumber: row.getCell(21).value ? BigInt(row.getCell(21).value) : null,
-            address: row.getCell(22).value,
-          },
-        ],
-        fees: [
-          {
-            title: row.getCell(23).value,
-            amount: parseFloat(row.getCell(24).value),
-            amountDate: row.getCell(25).value,
-            admissionDate: row.getCell(26).value,
-
-          },
-        ],
-        remark: row.getCell(27).value,
-        session: row.getCell(28).value,
-      };
-      students.push(student);
-    }
-  });
-
-  const results = {
-    importedCount: 0,
-    duplicateCount: 0,
-    duplicates: []
-  };
-
   try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.getWorksheet(1);
+
+    const students = [];
+
+    const getVal = (row, colIndex) => {
+      const cell = row.getCell(colIndex);
+      if (!cell || cell.value === null || cell.value === undefined) return null;
+      let v = cell.value;
+      if (typeof v === 'object') {
+        if (v instanceof Date) return v;
+        if (v.result !== undefined) v = v.result;
+        else if (v.text !== undefined) v = v.text;
+        else if (v.richText) v = v.richText.map(t => t.text).join('');
+      }
+      return v;
+    };
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber !== 1) {
+        const rawName = getVal(row, 1);
+        if (!rawName) return; // skip rows without name
+        const fullName = String(rawName).trim();
+        if (!fullName) return;
+
+        const genderRaw = getVal(row, 2);
+        const genderStr = genderRaw ? String(genderRaw).trim().toLowerCase() : 'male';
+        const gender = (genderStr === 'female' || genderStr === 'f') ? 'Female' : 'Male';
+
+        const dobRaw = getVal(row, 3);
+        let dateOfBirth = dobRaw ? new Date(dobRaw) : new Date();
+        if (isNaN(dateOfBirth.getTime())) dateOfBirth = new Date();
+
+        const rollNoRaw = getVal(row, 4);
+        const rollNo = rollNoRaw ? parseInt(rollNoRaw) || 0 : 0;
+
+        const standardRaw = getVal(row, 5);
+        const standard = standardRaw ? String(standardRaw).trim() : '1st';
+
+        const bloodGroupRaw = getVal(row, 6);
+        const bloodGroup = bloodGroupRaw ? String(bloodGroupRaw).trim() : null;
+
+        const scholarshipRaw = getVal(row, 7);
+        const scholarshipApplied = scholarshipRaw ? (String(scholarshipRaw).toLowerCase() === "true" || String(scholarshipRaw).toLowerCase() === "yes") : false;
+
+        const residentialAddress = getVal(row, 8) ? String(getVal(row, 8)).trim() : null;
+        const correspondenceAddress = getVal(row, 9) ? String(getVal(row, 9)).trim() : null;
+        const nationality = getVal(row, 10) ? String(getVal(row, 10)).trim() : null;
+        const religion = getVal(row, 11) ? String(getVal(row, 11)).trim() : null;
+        const denomination = getVal(row, 12) ? String(getVal(row, 12)).trim() : null;
+        const language = getVal(row, 13) ? String(getVal(row, 13)).trim() : null;
+        const motherTongue = getVal(row, 14) ? String(getVal(row, 14)).trim() : null;
+        const photoUrl = getVal(row, 15) ? String(getVal(row, 15)).trim() : null;
+
+        const fatherName = getVal(row, 16) ? String(getVal(row, 16)).trim() : null;
+        const motherName = getVal(row, 17) ? String(getVal(row, 17)).trim() : null;
+        const fatherContactRaw = getVal(row, 18);
+        const motherContactRaw = getVal(row, 19);
+        const distanceFromSchool = getVal(row, 20) ? parseFloat(getVal(row, 20)) : null;
+        const preferredPhoneRaw = getVal(row, 21);
+        const address = getVal(row, 22) ? String(getVal(row, 22)).trim() : null;
+
+        const parents = (fatherName || motherName || fatherContactRaw || motherContactRaw) ? [{
+          fatherName: fatherName || 'N/A',
+          motherName: motherName || 'N/A',
+          fatherContact: fatherContactRaw && !isNaN(parseInt(fatherContactRaw)) ? BigInt(parseInt(fatherContactRaw)) : BigInt(0),
+          motherContact: motherContactRaw && !isNaN(parseInt(motherContactRaw)) ? BigInt(parseInt(motherContactRaw)) : BigInt(0),
+          distanceFromSchool: isNaN(distanceFromSchool) ? null : distanceFromSchool,
+          preferredPhoneNumber: preferredPhoneRaw && !isNaN(parseInt(preferredPhoneRaw)) ? BigInt(parseInt(preferredPhoneRaw)) : null,
+          address: address || 'N/A',
+        }] : [];
+
+        const feeTitle = getVal(row, 23) ? String(getVal(row, 23)).trim() : null;
+        const feeAmountRaw = getVal(row, 24);
+        const feeAmount = feeAmountRaw ? parseFloat(feeAmountRaw) || 0 : 0;
+        const feeAmountDateRaw = getVal(row, 25);
+        let amountDate = feeAmountDateRaw ? new Date(feeAmountDateRaw) : new Date();
+        if (isNaN(amountDate.getTime())) amountDate = new Date();
+
+        const admissionDateRaw = getVal(row, 26);
+        let admissionDate = admissionDateRaw ? new Date(admissionDateRaw) : new Date();
+        if (isNaN(admissionDate.getTime())) admissionDate = new Date();
+
+        const fees = feeTitle ? [{
+          title: feeTitle,
+          amount: feeAmount,
+          amountDate,
+          admissionDate
+        }] : [];
+
+        const remark = getVal(row, 27) ? String(getVal(row, 27)).trim() : null;
+        const session = getVal(row, 28) ? String(getVal(row, 28)).trim() : (req.session || '2026-2027');
+
+        students.push({
+          fullName,
+          gender,
+          dateOfBirth,
+          rollNo,
+          standard,
+          bloodGroup,
+          scholarshipApplied,
+          residentialAddress,
+          correspondenceAddress,
+          nationality,
+          religion,
+          denomination,
+          language,
+          motherTongue,
+          photoUrl,
+          parents,
+          fees,
+          remark,
+          session
+        });
+      }
+    });
+
+    const results = {
+      importedCount: 0,
+      duplicateCount: 0,
+      duplicates: []
+    };
+
+    const targetCollege = req.college || 'svpcet';
+
     for (const student of students) {
-      // Check if student already exists
+      let rollNoToUse = student.rollNo;
+      if (!rollNoToUse) {
+        const maxStudent = await prisma.student.findFirst({
+          where: { standard: student.standard, session: student.session, college: targetCollege },
+          orderBy: { rollNo: 'desc' }
+        });
+        rollNoToUse = (maxStudent && maxStudent.rollNo) ? maxStudent.rollNo + 1 : 1;
+      }
+
       const existingStudent = await prisma.student.findUnique({
         where: {
           standard_rollNo_session_college: {
             standard: student.standard,
-            rollNo: student.rollNo,
+            rollNo: rollNoToUse,
             session: student.session,
-            college: req.college
+            college: targetCollege
           }
         }
       });
 
       if (existingStudent) {
         results.duplicateCount++;
-        results.duplicates.push(`${student.fullName} (Roll: ${student.rollNo}, Std: ${student.standard})`);
+        results.duplicates.push(`${student.fullName} (Roll: ${rollNoToUse}, Std: ${student.standard})`);
         continue;
       }
 
-      // Create students with mapped class ids
       await prisma.student.create({
         data: {
           fullName: student.fullName,
           gender: student.gender,
-          dateOfBirth: new Date(student.dateOfBirth),
-          rollNo: student.rollNo,
+          dateOfBirth: student.dateOfBirth,
+          rollNo: rollNoToUse,
           standard: student.standard,
           bloodGroup: student.bloodGroup,
           scholarshipApplied: student.scholarshipApplied,
@@ -284,13 +362,16 @@ router.post("/upload", upload.single("file"), async (req, res) => {
           session: student.session,
           nationality: student.nationality,
           religion: student.religion,
+          denomination: student.denomination,
+          language: student.language,
+          motherTongue: student.motherTongue,
           parents: {
             create: student.parents,
           },
           fees: {
-            create: student.fees.map(f => ({ ...f, college: req.college })),
+            create: student.fees.map(f => ({ ...f, college: targetCollege })),
           },
-          college: req.college
+          college: targetCollege
         },
       });
       results.importedCount++;
@@ -299,7 +380,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-    
+
     res.status(200).json({
       message: "Data import completed",
       ...results

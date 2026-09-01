@@ -56,13 +56,41 @@ router.post("/students", async (req, res) => {
         photoUrl,
         remark
     } = req.body;
-    const session = req.session;
     
-    if (!session) {
-        return res.status(400).json({ error: "Session not set. Please set a session first." });
+    if (!fullName || !fullName.trim()) {
+        return res.status(400).json({ error: "Full Name is required." });
     }
-    
+
+    if (!rollNo || isNaN(parseInt(rollNo))) {
+        return res.status(400).json({ error: "Roll Number is required." });
+    }
+
+    const session = req.session || "2026-2027";
+    const college = req.college || "svpcet";
+    const std = (standard && standard.trim()) ? standard.trim() : "1st";
+    const finalRollNo = parseInt(rollNo);
+
     try {
+        // Check uniqueness for (standard, rollNo, session, college)
+        const existingStudent = await prisma.student.findUnique({
+            where: {
+                standard_rollNo_session_college: {
+                    standard: std,
+                    rollNo: finalRollNo,
+                    session,
+                    college
+                }
+            }
+        });
+
+        if (existingStudent) {
+            return res.status(400).json({ error: `Roll Number ${finalRollNo} already exists for Class '${std}'.` });
+        }
+
+        const validGender = (gender === "Female" || gender === "Male") ? gender : "Male";
+        let dob = dateOfBirth ? new Date(dateOfBirth) : new Date();
+        if (isNaN(dob.getTime())) dob = new Date();
+
         // Fetch bus station price if bus is accepted
         let busPriceValue = null;
         if (busAccepted && busStationId) {
@@ -76,54 +104,62 @@ router.post("/students", async (req, res) => {
 
         // Fetch control settings to get global lunch fee if needed for this college
         const controlSettings = await prisma.control.findFirst({
-            where: { college: req.college }
+            where: { college }
         });
         const globalLunchFee = controlSettings ? controlSettings.lunchFee : null;
 
+        const validParents = Array.isArray(parents) 
+            ? parents.filter(p => p && (p.fatherName || p.motherName || p.fatherContact || p.motherContact)).map((p) => ({
+                fatherName: p.fatherName || "N/A",
+                motherName: p.motherName || "N/A",
+                fatherContact: p.fatherContact && !isNaN(parseInt(p.fatherContact)) ? parseInt(p.fatherContact) : 0,
+                motherContact: p.motherContact && !isNaN(parseInt(p.motherContact)) ? parseInt(p.motherContact) : 0,
+                distanceFromSchool: p.distanceFromSchool && !isNaN(parseFloat(p.distanceFromSchool)) ? parseFloat(p.distanceFromSchool) : null,
+                preferredPhoneNumber: p.preferredPhoneNumber && !isNaN(parseInt(p.preferredPhoneNumber)) ? parseInt(p.preferredPhoneNumber) : null,
+                address: p.address || "N/A",
+            }))
+            : [];
+
+        const validFees = Array.isArray(fees)
+            ? fees.filter(f => f && (f.installmentType || f.amount)).map((f) => ({
+                title: f.installmentType || "General Fee",
+                amount: f.amount && !isNaN(parseFloat(f.amount)) ? parseFloat(f.amount) : 0,
+                amountDate: f.amountDate && !isNaN(new Date(f.amountDate).getTime()) ? new Date(f.amountDate) : new Date(),
+                admissionDate: f.admissionDate && !isNaN(new Date(f.admissionDate).getTime()) ? new Date(f.admissionDate) : new Date(),
+                college
+            }))
+            : [];
+
         const student = await prisma.student.create({
             data: {
-                fullName,
-                gender,
-                dateOfBirth: new Date(dateOfBirth),
-                rollNo: parseInt(rollNo),
-                standard,
-                bloodGroup,
-                scholarshipApplied,
+                fullName: fullName.trim(),
+                gender: validGender,
+                dateOfBirth: dob,
+                rollNo: finalRollNo,
+                standard: std,
+                bloodGroup: bloodGroup || null,
+                scholarshipApplied: scholarshipApplied || false,
                 lunchAccepted: lunchAccepted || false,
                 lunchPrice: lunchAccepted ? (globalLunchFee ?? (lunchPrice ? parseFloat(lunchPrice) : null)) : null,
                 busAccepted: busAccepted || false,
                 busStationId: busAccepted && busStationId ? parseInt(busStationId) : null,
                 busPrice: busPriceValue,
-                residentialAddress,
-                correspondenceAddress,
-                photoUrl,
-                remark,
-                nationality,
-                religion,
-                denomination,
-                language,
-                motherTongue,
+                residentialAddress: residentialAddress || null,
+                correspondenceAddress: correspondenceAddress || null,
+                photoUrl: photoUrl || null,
+                remark: remark || null,
+                nationality: nationality || null,
+                religion: religion || null,
+                denomination: denomination || null,
+                language: language || null,
+                motherTongue: motherTongue || null,
                 session,
-                college: req.college,
+                college,
                 parents: {
-                    create: parents.map((parent) => ({
-                        fatherName: parent.fatherName,
-                        motherName: parent.motherName,
-                        fatherContact: parseInt(parent.fatherContact),
-                        motherContact: parseInt(parent.motherContact),
-                        distanceFromSchool: parent.distanceFromSchool ? parseFloat(parent.distanceFromSchool) : null,
-                        preferredPhoneNumber: parent.preferredPhoneNumber ? parseInt(parent.preferredPhoneNumber) : null,
-                        address: parent.address,
-                    })),
+                    create: validParents,
                 },
                 fees: {
-                    create: fees.map((fee) => ({
-                        title: fee.installmentType,
-                        amount: parseFloat(fee.amount),
-                        amountDate: new Date(fee.amountDate),
-                        admissionDate: new Date(fee.admissionDate),
-                        college: req.college
-                    })),
+                    create: validFees,
                 },
             },
             include: {
@@ -229,7 +265,10 @@ router.post("/students", async (req, res) => {
         res.status(201).json(JSON.stringify(createdStudent, jsonBigIntReplacer));
     } catch (error) {
         console.error("Error creating student:", error);
-        res.status(500).send("Failed to create student");
+        if (error.code === 'P2002') {
+            return res.status(400).json({ error: "Roll Number already exists for this class, session, and college." });
+        }
+        res.status(500).json({ error: error.message || "Failed to create student" });
     }
 });
 
