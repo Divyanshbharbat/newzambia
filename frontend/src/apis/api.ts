@@ -59,7 +59,8 @@ export const createStudent = async (student: Student) => {
     const response = await axios.post(`${root}/students`, student);
     return response.data;
   } catch (error) {
-    throw new Error("Error creating student");
+    console.error("Error creating student:", error);
+    throw error;
   }
 };
 

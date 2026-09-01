@@ -2,6 +2,7 @@ const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const router = express.Router();
 const prisma = new PrismaClient();
+const { findMatchingStandard } = require("../utils/standardMatcher");
 
 
 function jsonBigIntReplacer(key, value) {
@@ -71,11 +72,27 @@ router.post("/students", async (req, res) => {
     const finalRollNo = parseInt(rollNo);
 
     try {
+        // Verify class (Standards) existence in database
+        const dbStandards = await prisma.standards.findMany({
+            where: { college }
+        });
+
+        if (dbStandards.length === 0) {
+            return res.status(400).json({ error: "No classes found in the database. Please add classes first before creating a student." });
+        }
+
+        const matchedStandard = findMatchingStandard(std, dbStandards);
+        if (!matchedStandard) {
+            return res.status(400).json({ error: `Class '${std}' does not exist in the database. Please add this class first.` });
+        }
+
+        const finalStandard = matchedStandard.std;
+
         // Check uniqueness for (standard, rollNo, session, college)
         const existingStudent = await prisma.student.findUnique({
             where: {
                 standard_rollNo_session_college: {
-                    standard: std,
+                    standard: finalStandard,
                     rollNo: finalRollNo,
                     session,
                     college
@@ -136,7 +153,7 @@ router.post("/students", async (req, res) => {
                 gender: validGender,
                 dateOfBirth: dob,
                 rollNo: finalRollNo,
-                standard: std,
+                standard: finalStandard,
                 bloodGroup: bloodGroup || null,
                 scholarshipApplied: scholarshipApplied || false,
                 lunchAccepted: lunchAccepted || false,
@@ -283,6 +300,21 @@ router.delete("/delete/students", async (req, res) => {
     }
 });
 
+async function getSearchStandards(inputStd, college) {
+    const searchStds = new Set();
+    if (inputStd && String(inputStd).trim()) {
+        searchStds.add(String(inputStd).trim());
+    }
+    if (college) {
+        const dbStandards = await prisma.standards.findMany({ where: { college } });
+        const matched = findMatchingStandard(inputStd, dbStandards);
+        if (matched) {
+            searchStds.add(matched.std.trim());
+        }
+    }
+    return Array.from(searchStds);
+}
+
 // Search Students
 router.get("/getallstudent", async (req, res) => {
     const { std } = req.query;
@@ -293,9 +325,10 @@ router.get("/getallstudent", async (req, res) => {
     }
     
     try {
+        const searchStds = await getSearchStandards(std, req.college);
         const result = await prisma.student.findMany({
             where: {
-                standard: std,
+                standard: { in: searchStds },
                 session : session,
                 college: req.college
             }
@@ -317,12 +350,13 @@ router.get("/students/rollNo", async (req, res) => {
     }
 
     try {
+        const searchStds = await getSearchStandards(standard, req.college);
         let student;
         if (/^\d+$/.test(rollno)){
             student = await prisma.student.findFirst({
                 where: {
                     rollNo: parseInt(rollno),
-                    standard: standard,
+                    standard: { in: searchStds },
                     session: session,
                     college: req.college
                 },
@@ -335,7 +369,7 @@ router.get("/students/rollNo", async (req, res) => {
             student = await prisma.student.findFirst({
                 where: {
                     rollNo: parseInt(rollno),
-                    standard: standard,
+                    standard: { in: searchStds },
                     session: session,
                     college: req.college
                 },
@@ -346,13 +380,12 @@ router.get("/students/rollNo", async (req, res) => {
             });   
         }
         if (student) {
-            res.status(200).send(JSON.stringify(student, jsonBigIntReplacer));
+            res.status(200).send(JSON.parse(JSON.stringify(student, jsonBigIntReplacer)));
         } else {
             res.status(404).json({ message: "Student not found" });
         }
     } catch (error) {
-        console.error("Error fetching student:", error.message);
-        console.error("Stack trace:", error.stack);
+        console.error("Error fetching student:", error);
         res.status(500).json({ message: "An error occurred while fetching the student" });
     }
 });

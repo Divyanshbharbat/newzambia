@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const path = require("path");
 
 const { exec } = require("child_process");
+const { findMatchingStandard } = require("../utils/standardMatcher");
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -317,7 +318,44 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       duplicates: []
     };
 
+    if (students.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "No student records found in the uploaded file." });
+    }
+
     const targetCollege = req.college || 'svpcet';
+
+    // Verify classes (Standards) exist in database for targetCollege
+    const dbStandards = await prisma.standards.findMany({
+      where: { college: targetCollege }
+    });
+
+    if (dbStandards.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({
+        error: "No classes (standards) found in the database. Please add classes first before uploading students."
+      });
+    }
+
+    const missingClasses = new Set();
+
+    for (const student of students) {
+      const matched = findMatchingStandard(student.standard, dbStandards);
+      if (matched) {
+        // Map to exact canonical standard string stored in DB
+        student.standard = matched.std;
+      } else {
+        missingClasses.add(student.standard || "Unassigned");
+      }
+    }
+
+    if (missingClasses.size > 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      const missingList = Array.from(missingClasses).map(c => `'${c}'`).join(', ');
+      return res.status(400).json({
+        error: `The following class(es) in the uploaded file do not exist in the database: ${missingList}. Please add these classes first before uploading students.`
+      });
+    }
 
     for (const student of students) {
       let rollNoToUse = student.rollNo;
@@ -570,51 +608,51 @@ router.get("/getChanges", async (req, res) => {
 
 
 router.post("/uploadAttendance", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const filePath = req.file.path;
-
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.getWorksheet(1);
-
-  const Attendance = [];
-
-  worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber !== 1) {
-      // Skip header row
-      let dateValue = row.getCell(4).value;
-
-      // If the date is a serial number in Excel, convert it
-      if (typeof dateValue === 'number') {
-        dateValue = new Date(Math.round((dateValue - 25569) * 86400 * 1000)); // Convert Excel serial date
-      } else {
-        // Parse date string and convert to UTC
-        dateValue = new Date(dateValue);
-        // Normalize to UTC by stripping local timezone offset
-        dateValue = new Date(Date.UTC(
-          dateValue.getFullYear(),
-          dateValue.getMonth(),
-          dateValue.getDate()
-        ));
-      }
-
-
-      const attendance = {
-
-        studentName: row.getCell(1).value,
-        standard: row.getCell(2).value,
-        subjectName: row.getCell(3).value,
-        date: dateValue,
-        status: row.getCell(5).value,
-        rollNo: row.getCell(6).value,
-        session: row.getCell(7).value,
-        studentId: row.getCell(8).value,
-      };
-      Attendance.push(attendance);
-    }
-  });
+  const targetCollege = req.college || 'svpcet';
 
   try {
-    // Create students with mapped class ids
+    const dbStandards = await prisma.standards.findMany({ where: { college: targetCollege } });
+    if (dbStandards.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "No classes found in the database. Please add classes first before uploading attendance." });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.getWorksheet(1);
+
+    const Attendance = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber !== 1) {
+        let dateValue = row.getCell(4).value;
+        if (typeof dateValue === 'number') {
+          dateValue = new Date(Math.round((dateValue - 25569) * 86400 * 1000));
+        } else {
+          dateValue = new Date(dateValue);
+          dateValue = new Date(Date.UTC(
+            dateValue.getFullYear(),
+            dateValue.getMonth(),
+            dateValue.getDate()
+          ));
+        }
+
+        const attendance = {
+          studentName: row.getCell(1).value,
+          standard: row.getCell(2).value,
+          subjectName: row.getCell(3).value,
+          date: dateValue,
+          status: row.getCell(5).value,
+          rollNo: row.getCell(6).value,
+          session: row.getCell(7).value,
+          studentId: row.getCell(8).value,
+        };
+        Attendance.push(attendance);
+      }
+    });
+
     for (const at of Attendance) {
       await prisma.attendance.create({
         data: {
@@ -627,7 +665,7 @@ router.post("/uploadAttendance", upload.single("file"), async (req, res) => {
           subjectId: at.subjectId ? parseInt(at.subjectId) : null,
           session: at.session,
           studentId: at.studentId,
-          college: req.college
+          college: targetCollege
         },
       });
     }
@@ -636,36 +674,43 @@ router.post("/uploadAttendance", upload.single("file"), async (req, res) => {
     res.status(200).send("File uploaded and data imported successfully");
   } catch (error) {
     console.error("Error importing data:", error);
-    res.status(500).send("Failed to import data");
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.status(500).json({ error: "Failed to import attendance data", details: error.message });
   }
 });
 
 router.post("/uploadFee", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const filePath = req.file.path;
-
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.getWorksheet(1);
-
-  const fees = [];
-
-  worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber !== 1) {
-
-      const fee = {
-        id: row.getCell(1).value,
-        title: row.getCell(2).value,
-        amount: row.getCell(3).value,
-        amountDate: row.getCell(4).value,
-        admissionDate: row.getCell(5).value,
-        studentId: row.getCell(6).value,
-      };
-      fees.push(fee);
-    }
-  });
+  const targetCollege = req.college || 'svpcet';
 
   try {
-    // Create students with mapped class ids
+    const studentsCount = await prisma.student.count({ where: { college: targetCollege } });
+    if (studentsCount === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "No students found in the database. Please add students first before uploading fees." });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.getWorksheet(1);
+
+    const fees = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber !== 1) {
+        const fee = {
+          id: row.getCell(1).value,
+          title: row.getCell(2).value,
+          amount: row.getCell(3).value,
+          amountDate: row.getCell(4).value,
+          admissionDate: row.getCell(5).value,
+          studentId: row.getCell(6).value,
+        };
+        fees.push(fee);
+      }
+    });
+
     for (const at of fees) {
       await prisma.fee.create({
         data: {
@@ -674,7 +719,7 @@ router.post("/uploadFee", upload.single("file"), async (req, res) => {
           amountDate: at.amountDate,
           admissionDate: at.admissionDate,
           studentId: at.studentId,
-          college: req.college
+          college: targetCollege
         },
       });
     }
@@ -683,37 +728,43 @@ router.post("/uploadFee", upload.single("file"), async (req, res) => {
     res.status(200).send("File uploaded and data imported successfully");
   } catch (error) {
     console.error("Error importing data:", error);
-    res.status(500).send("Failed to import data");
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.status(500).json({ error: "Failed to import fee data", details: error.message });
   }
 });
 
-
 router.post("/uploadHostel", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const filePath = req.file.path;
-
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.getWorksheet(1);
-
-  const Hostel = [];
-
-  worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber !== 1) {
-
-      const hostel = {
-        id: row.getCell(1).value,
-        name: row.getCell(2).value,
-        rollNo: row.getCell(3).value,
-        standard: row.getCell(4).value,
-        gender: row.getCell(5).value,
-        bed_number: row.getCell(6).value,
-      };
-      Hostel.push(hostel);
-    }
-  });
+  const targetCollege = req.college || 'svpcet';
 
   try {
-    // Create students with mapped class ids
+    const dbStandards = await prisma.standards.findMany({ where: { college: targetCollege } });
+    if (dbStandards.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "No classes found in the database. Please add classes first before uploading hostel data." });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.getWorksheet(1);
+
+    const Hostel = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber !== 1) {
+        const hostel = {
+          id: row.getCell(1).value,
+          name: row.getCell(2).value,
+          rollNo: row.getCell(3).value,
+          standard: row.getCell(4).value,
+          gender: row.getCell(5).value,
+          bed_number: row.getCell(6).value,
+        };
+        Hostel.push(hostel);
+      }
+    });
+
     for (const at of Hostel) {
       await prisma.hostel.create({
         data: {
@@ -722,7 +773,7 @@ router.post("/uploadHostel", upload.single("file"), async (req, res) => {
           standard: at.standard,
           gender: at.gender,
           bed_number: at.bed_number,
-          college: req.college
+          college: targetCollege
         },
       });
     }
@@ -731,38 +782,45 @@ router.post("/uploadHostel", upload.single("file"), async (req, res) => {
     res.status(200).send("File uploaded and data imported successfully");
   } catch (error) {
     console.error("Error importing data:", error);
-    res.status(500).send("Failed to import data");
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.status(500).json({ error: "Failed to import hostel data", details: error.message });
   }
 });
 
 router.post("/uploadMarks", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file uploaded" });
   const filePath = req.file.path;
-
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.getWorksheet(1);
-
-  const Marks = [];
-
-  worksheet.eachRow((row, rowNumber) => {
-    if (rowNumber !== 1) {
-
-      const mark = {
-        id: row.getCell(1).value,
-        studentId: row.getCell(2).value,
-        subjectId: row.getCell(3).value,
-        subjectName: row.getCell(4).value,
-        examinationType: row.getCell(5).value,
-        obtainedMarks: row.getCell(6).value,
-        totalMarks: row.getCell(7).value,
-        percentage: row.getCell(8).value,
-      };
-      Marks.push(mark);
-    }
-  });
+  const targetCollege = req.college || 'svpcet';
 
   try {
-    // Create students with mapped class ids
+    const dbStandards = await prisma.standards.findMany({ where: { college: targetCollege } });
+    if (dbStandards.length === 0) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      return res.status(400).json({ error: "No classes found in the database. Please add classes first before uploading marks." });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(filePath);
+    const worksheet = workbook.getWorksheet(1);
+
+    const Marks = [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber !== 1) {
+        const mark = {
+          id: row.getCell(1).value,
+          studentId: row.getCell(2).value,
+          subjectId: row.getCell(3).value,
+          subjectName: row.getCell(4).value,
+          examinationType: row.getCell(5).value,
+          obtainedMarks: row.getCell(6).value,
+          totalMarks: row.getCell(7).value,
+          percentage: row.getCell(8).value,
+        };
+        Marks.push(mark);
+      }
+    });
+
     for (const at of Marks) {
       await prisma.marks.create({
         data: {
@@ -773,7 +831,7 @@ router.post("/uploadMarks", upload.single("file"), async (req, res) => {
           obtainedMarks: at.obtainedMarks,
           totalMarks: at.totalMarks,
           percentage: at.percentage,
-          college: req.college
+          college: targetCollege
         },
       });
     }
@@ -782,7 +840,8 @@ router.post("/uploadMarks", upload.single("file"), async (req, res) => {
     res.status(200).send("File uploaded and data imported successfully");
   } catch (error) {
     console.error("Error importing data:", error);
-    res.status(500).send("Failed to import data");
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    res.status(500).json({ error: "Failed to import marks data", details: error.message });
   }
 });
 
