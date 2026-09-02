@@ -24,4 +24,6 @@ shell:startup
 
 ## it will open the windows startup folder. Copy 'start_servers_hidden.vbs' to startup folder
 
-## restrt computer
+## restart computer
+
+## then in the url add 'ipaddress:5173/
