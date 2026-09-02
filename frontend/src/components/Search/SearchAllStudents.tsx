@@ -52,7 +52,7 @@ const Searchall = () => {
             </thead>
             <tbody>
               {result.map((e: any) => {
-                const formattedDate = new Date(e.dateOfBirth).toISOString().split('T')[0];
+                const formattedDate = e.dateOfBirth ? new Date(e.dateOfBirth).toISOString().split('T')[0] : 'N/A';
                 const scholarshipApplied: string = e.scholarshipApplied ? "True" : "False";
                 return (
                   <tr key={e.rollNo}>

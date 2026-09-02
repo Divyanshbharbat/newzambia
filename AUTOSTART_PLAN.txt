@@ -1,0 +1,71 @@
+================================================================================
+  OVERALL PLAN: AUTOMATIC SYSTEM STARTUP & HIDDEN BACKGROUND SERVERS
+================================================================================
+
+GOAL:
+Automatically run both the Backend (Port 5000) and Frontend (Port 5173 / 3000) 
+servers whenever your computer turns on, running silently in the background 
+with 0 visible terminal/command prompt windows.
+
+--------------------------------------------------------------------------------
+1. HOW THE HIDDEN BACKGROUND RUNNING WORKS
+--------------------------------------------------------------------------------
+By default, running `npm start` or `npm run dev` opens command prompt windows.
+To run them completely hidden:
+- A Windows VBScript (`start_hidden.vbs`) is created using `WScript.Shell`.
+- By setting the window mode parameter to `0` (e.g. `WshShell.Run "cmd /c npm ...", 0, False`),
+  Windows executes Node.js in the background without displaying any black console windows.
+
+--------------------------------------------------------------------------------
+2. HOW AUTOMATIC SYSTEM STARTUP WORKS
+--------------------------------------------------------------------------------
+Windows has a built-in "Startup Folder" located at:
+`C:\Users\<YourUsername>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup`
+(or simply accessible by pressing `Win + R` and typing `shell:startup`).
+
+Any shortcut placed inside this folder automatically runs when you log into Windows.
+
+--------------------------------------------------------------------------------
+3. STEP-BY-STEP IMPLEMENTATION STEPS (FOR FUTURE REFERENCE)
+--------------------------------------------------------------------------------
+
+STEP A: Create `start_hidden.vbs` in project root (`D:\zambianew\Zambia_Project`):
+--------------------------------------------------------------------------------
+Set WshShell = CreateObject("WScript.Shell")
+
+' Start Backend in hidden mode
+WshShell.CurrentDirectory = "D:\zambianew\Zambia_Project\backend"
+WshShell.Run "cmd /c npm start", 0, False
+
+' Start Frontend in hidden mode
+WshShell.CurrentDirectory = "D:\zambianew\Zambia_Project\frontend"
+WshShell.Run "cmd /c npm run dev", 0, False
+
+
+STEP B: Create 1-Click Installer `setup_autostart.bat`:
+--------------------------------------------------------------------------------
+@echo off
+set SCRIPT_PATH=D:\zambianew\Zambia_Project\start_hidden.vbs
+set STARTUP_FOLDER=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+set SHORTCUT_PATH=%STARTUP_FOLDER%\ZambiaProjectAutoStart.lnk
+
+powershell -Command "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT_PATH%');$s.TargetPath='%SCRIPT_PATH%';$s.WorkingDirectory='D:\zambianew\Zambia_Project';$s.Save()"
+echo Auto-start shortcut created successfully!
+
+
+STEP C: Create Server Stopper `stop_servers.bat`:
+--------------------------------------------------------------------------------
+@echo off
+taskkill /F /IM node.exe /T
+echo Background servers stopped successfully.
+
+
+--------------------------------------------------------------------------------
+4. HOW TO USE & MANAGE
+--------------------------------------------------------------------------------
+- To Enable Auto-Start: Double-click `setup_autostart.bat`.
+- To Run Silently Right Now: Double-click `start_hidden.vbs`.
+- To Stop Background Servers: Double-click `stop_servers.bat`.
+- To Remove Auto-Start: Press `Win + R`, type `shell:startup`, and delete `ZambiaProjectAutoStart.lnk`.
+
+================================================================================

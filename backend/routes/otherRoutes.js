@@ -86,8 +86,6 @@ router.get('/excelstudents', async (req, res) => {
 
     // Define columns for the worksheet
     worksheet.columns = [
-
-      // { header: 'StudentId', key: 'sid', width: 10 },
       { header: 'Full Name', key: 'fullName', width: 30 },
       { header: 'Gender', key: 'gender', width: 10 },
       { header: 'Date of Birth', key: 'dateOfBirth', width: 15 },
@@ -116,44 +114,39 @@ router.get('/excelstudents', async (req, res) => {
       { header: 'Admission Date', key: 'admissionDate', width: 15 },
       { header: 'Remark', key: 'remark', width: 15 },
       { header: 'Session', key: 'session', width: 10 },
-      { header: 'Nationality', key: 'nationality', width: 15 },
-      { header: 'Religion', key: 'religion', width: 15 },
     ];
 
     // Add student data to worksheet
     studentsInfo.forEach((student) => {
-      const feesPaid = student.fees.reduce((sum, fee) => sum + fee.amount, 0);
       worksheet.addRow({
-
-        // sid: student.id,
-        fullName: student.fullName,
-        gender: student.gender,
-        dateOfBirth: student.dateOfBirth.toISOString().split('T')[0],
-        rollNo: student.rollNo,
-        standard: student.standard,
+        fullName: student.fullName || '',
+        gender: student.gender || '',
+        dateOfBirth: student.dateOfBirth ? student.dateOfBirth.toISOString().split('T')[0] : '',
+        rollNo: student.rollNo ?? '',
+        standard: student.standard || '',
         bloodGroup: student.bloodGroup || '',
-        scholarshipApplied: student.scholarshipApplied,
-        residentialAddress: student.residentialAddress,
-        correspondenceAddress: student.correspondenceAddress,
+        scholarshipApplied: student.scholarshipApplied ? 'Yes' : 'No',
+        residentialAddress: student.residentialAddress || '',
+        correspondenceAddress: student.correspondenceAddress || '',
         nationality: student.nationality || '',
         religion: student.religion || '',
         denomination: student.denomination || '',
         language: student.language || '',
         motherTongue: student.motherTongue || '',
-        photoUrl: student.photoUrl,
-        fatherName: student.parents[0]?.fatherName || '',
-        motherName: student.parents[0]?.motherName || '',
-        fatherContact: student.parents[0]?.fatherContact?.toString() || '',
-        motherContact: student.parents[0]?.motherContact?.toString() || '',
-        distanceFromSchool: student.parents[0]?.distanceFromSchool || '',
-        preferredPhoneNumber: student.parents[0]?.preferredPhoneNumber?.toString() || '',
-        parentAddress: student.parents[0]?.address || '',
-        feeTitle: student.fees[0]?.title || '',
-        feeAmount: student.fees[0]?.amount,
-        feeAmountDate: student.fees[0]?.amountDate,
-        admissionDate: student.fees[0]?.admissionDate,
+        photoUrl: student.photoUrl || '',
+        fatherName: (student.parents[0]?.fatherName && student.parents[0].fatherName !== 'N/A') ? student.parents[0].fatherName : '',
+        motherName: (student.parents[0]?.motherName && student.parents[0].motherName !== 'N/A') ? student.parents[0].motherName : '',
+        fatherContact: student.parents[0]?.fatherContact && student.parents[0].fatherContact.toString() !== '0' ? student.parents[0].fatherContact.toString() : '',
+        motherContact: student.parents[0]?.motherContact && student.parents[0].motherContact.toString() !== '0' ? student.parents[0].motherContact.toString() : '',
+        distanceFromSchool: student.parents[0]?.distanceFromSchool ?? '',
+        preferredPhoneNumber: student.parents[0]?.preferredPhoneNumber ? student.parents[0].preferredPhoneNumber.toString() : '',
+        parentAddress: (student.parents[0]?.address && student.parents[0].address !== 'N/A') ? student.parents[0].address : '',
+        feeTitle: student.fees[0]?.title && student.fees[0].title !== 'General Fee' ? student.fees[0].title : '',
+        feeAmount: student.fees[0]?.amount ?? '',
+        feeAmountDate: student.fees[0]?.amountDate ? student.fees[0].amountDate.toISOString().split('T')[0] : '',
+        admissionDate: student.fees[0]?.admissionDate ? student.fees[0].admissionDate.toISOString().split('T')[0] : '',
         remark: student.remark || '',
-        session: student.session,
+        session: student.session || '',
       });
     });
 
@@ -171,6 +164,97 @@ router.get('/excelstudents', async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Error fetching students data:', error);
+    res.status(500).json({ error: 'An error occurred' });
+  }
+});
+
+//Get all student information in CSV file 
+router.get('/csvstudents', async (req, res) => {
+  const session = req.session;
+  try {
+    const studentsInfo = await prisma.student.findMany({
+      where: { session: session, college: req.college },
+      include: {
+        parents: true,
+        fees: true,
+        marks: true,
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Students');
+
+    worksheet.columns = [
+      { header: 'Full Name', key: 'fullName', width: 30 },
+      { header: 'Gender', key: 'gender', width: 10 },
+      { header: 'Date of Birth', key: 'dateOfBirth', width: 15 },
+      { header: 'Roll No', key: 'rollNo', width: 10 },
+      { header: 'Standard', key: 'standard', width: 10 },
+      { header: 'Blood Group', key: 'bloodGroup', width: 15 },
+      { header: 'Scholarship Applied', key: 'scholarshipApplied', width: 15 },
+      { header: 'Residential Address', key: 'residentialAddress', width: 30 },
+      { header: 'Correspondence Address', key: 'correspondenceAddress', width: 30 },
+      { header: 'Nationality', key: 'nationality', width: 15 },
+      { header: 'Religion', key: 'religion', width: 15 },
+      { header: 'Denomination', key: 'denomination', width: 15 },
+      { header: 'Language', key: 'language', width: 15 },
+      { header: 'Mother Tongue', key: 'motherTongue', width: 15 },
+      { header: 'Photo URL', key: 'photoUrl', width: 30 },
+      { header: 'Father Name', key: 'fatherName', width: 20 },
+      { header: 'Mother Name', key: 'motherName', width: 20 },
+      { header: 'Father Contact', key: 'fatherContact', width: 15 },
+      { header: 'Mother Contact', key: 'motherContact', width: 15 },
+      { header: 'Distance from School (kms)', key: 'distanceFromSchool', width: 20 },
+      { header: 'Preferred Phone Number for School', key: 'preferredPhoneNumber', width: 25 },
+      { header: 'Parent Address', key: 'parentAddress', width: 30 },
+      { header: 'Fee Title', key: 'feeTitle', width: 15 },
+      { header: 'Fee Amount', key: 'feeAmount', width: 15 },
+      { header: 'Amount Date', key: 'feeAmountDate', width: 15 },
+      { header: 'Admission Date', key: 'admissionDate', width: 15 },
+      { header: 'Remark', key: 'remark', width: 15 },
+      { header: 'Session', key: 'session', width: 10 },
+    ];
+
+    studentsInfo.forEach((student) => {
+      worksheet.addRow({
+        fullName: student.fullName || '',
+        gender: student.gender || '',
+        dateOfBirth: student.dateOfBirth ? student.dateOfBirth.toISOString().split('T')[0] : '',
+        rollNo: student.rollNo ?? '',
+        standard: student.standard || '',
+        bloodGroup: student.bloodGroup || '',
+        scholarshipApplied: student.scholarshipApplied ? 'Yes' : 'No',
+        residentialAddress: student.residentialAddress || '',
+        correspondenceAddress: student.correspondenceAddress || '',
+        nationality: student.nationality || '',
+        religion: student.religion || '',
+        denomination: student.denomination || '',
+        language: student.language || '',
+        motherTongue: student.motherTongue || '',
+        photoUrl: student.photoUrl || '',
+        fatherName: (student.parents[0]?.fatherName && student.parents[0].fatherName !== 'N/A') ? student.parents[0].fatherName : '',
+        motherName: (student.parents[0]?.motherName && student.parents[0].motherName !== 'N/A') ? student.parents[0].motherName : '',
+        fatherContact: student.parents[0]?.fatherContact && student.parents[0].fatherContact.toString() !== '0' ? student.parents[0].fatherContact.toString() : '',
+        motherContact: student.parents[0]?.motherContact && student.parents[0].motherContact.toString() !== '0' ? student.parents[0].motherContact.toString() : '',
+        distanceFromSchool: student.parents[0]?.distanceFromSchool ?? '',
+        preferredPhoneNumber: student.parents[0]?.preferredPhoneNumber ? student.parents[0].preferredPhoneNumber.toString() : '',
+        parentAddress: (student.parents[0]?.address && student.parents[0].address !== 'N/A') ? student.parents[0].address : '',
+        feeTitle: student.fees[0]?.title && student.fees[0].title !== 'General Fee' ? student.fees[0].title : '',
+        feeAmount: student.fees[0]?.amount ?? '',
+        feeAmountDate: student.fees[0]?.amountDate ? student.fees[0].amountDate.toISOString().split('T')[0] : '',
+        admissionDate: student.fees[0]?.admissionDate ? student.fees[0].admissionDate.toISOString().split('T')[0] : '',
+        remark: student.remark || '',
+        session: student.session || '',
+      });
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="students_data.csv"');
+
+    await workbook.csv.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error fetching CSV students data:', error);
     res.status(500).json({ error: 'An error occurred' });
   }
 });
@@ -336,34 +420,36 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       }
 
       // Default fallback for 28-column standard layout if still missing
-      if (!colMap.fullName) colMap.fullName = 1;
-      if (!colMap.gender) colMap.gender = 2;
-      if (!colMap.dateOfBirth) colMap.dateOfBirth = 3;
-      if (!colMap.rollNo) colMap.rollNo = 4;
-      if (!colMap.standard) colMap.standard = 5;
-      if (!colMap.bloodGroup) colMap.bloodGroup = 6;
-      if (!colMap.scholarshipApplied) colMap.scholarshipApplied = 7;
-      if (!colMap.residentialAddress) colMap.residentialAddress = 8;
-      if (!colMap.correspondenceAddress) colMap.correspondenceAddress = 9;
-      if (!colMap.nationality) colMap.nationality = 10;
-      if (!colMap.religion) colMap.religion = 11;
-      if (!colMap.denomination) colMap.denomination = 12;
-      if (!colMap.language) colMap.language = 13;
-      if (!colMap.motherTongue) colMap.motherTongue = 14;
-      if (!colMap.photoUrl) colMap.photoUrl = 15;
-      if (!colMap.fatherName) colMap.fatherName = 16;
-      if (!colMap.motherName) colMap.motherName = 17;
-      if (!colMap.fatherContact) colMap.fatherContact = 18;
-      if (!colMap.motherContact) colMap.motherContact = 19;
-      if (!colMap.distanceFromSchool) colMap.distanceFromSchool = 20;
-      if (!colMap.preferredPhoneNumber) colMap.preferredPhoneNumber = 21;
-      if (!colMap.address) colMap.address = 22;
-      if (!colMap.feeTitle) colMap.feeTitle = 23;
-      if (!colMap.feeAmount) colMap.feeAmount = 24;
-      if (!colMap.feeAmountDate) colMap.feeAmountDate = 25;
-      if (!colMap.admissionDate) colMap.admissionDate = 26;
-      if (!colMap.remark) colMap.remark = 27;
-      if (!colMap.session) colMap.session = 28;
+      if (!colMap.fullName && !colMap.standard && !colMap.rollNo) {
+        if (!colMap.fullName) colMap.fullName = 1;
+        if (!colMap.gender) colMap.gender = 2;
+        if (!colMap.dateOfBirth) colMap.dateOfBirth = 3;
+        if (!colMap.rollNo) colMap.rollNo = 4;
+        if (!colMap.standard) colMap.standard = 5;
+        if (!colMap.bloodGroup) colMap.bloodGroup = 6;
+        if (!colMap.scholarshipApplied) colMap.scholarshipApplied = 7;
+        if (!colMap.residentialAddress) colMap.residentialAddress = 8;
+        if (!colMap.correspondenceAddress) colMap.correspondenceAddress = 9;
+        if (!colMap.nationality) colMap.nationality = 10;
+        if (!colMap.religion) colMap.religion = 11;
+        if (!colMap.denomination) colMap.denomination = 12;
+        if (!colMap.language) colMap.language = 13;
+        if (!colMap.motherTongue) colMap.motherTongue = 14;
+        if (!colMap.photoUrl) colMap.photoUrl = 15;
+        if (!colMap.fatherName) colMap.fatherName = 16;
+        if (!colMap.motherName) colMap.motherName = 17;
+        if (!colMap.fatherContact) colMap.fatherContact = 18;
+        if (!colMap.motherContact) colMap.motherContact = 19;
+        if (!colMap.distanceFromSchool) colMap.distanceFromSchool = 20;
+        if (!colMap.preferredPhoneNumber) colMap.preferredPhoneNumber = 21;
+        if (!colMap.address) colMap.address = 22;
+        if (!colMap.feeTitle) colMap.feeTitle = 23;
+        if (!colMap.feeAmount) colMap.feeAmount = 24;
+        if (!colMap.feeAmountDate) colMap.feeAmountDate = 25;
+        if (!colMap.admissionDate) colMap.admissionDate = 26;
+        if (!colMap.remark) colMap.remark = 27;
+        if (!colMap.session) colMap.session = 28;
+      }
     }
 
     worksheet.eachRow((row, rowNumber) => {
@@ -384,12 +470,24 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       if (!fullName) return;
 
       const genderRaw = colMap.gender ? getVal(row, colMap.gender) : null;
-      const genderStr = genderRaw ? String(genderRaw).trim().toLowerCase() : 'male';
-      const gender = (genderStr === 'female' || genderStr === 'f') ? 'Female' : 'Male';
+      let gender = null;
+      if (genderRaw) {
+        const genderStr = String(genderRaw).trim().toLowerCase();
+        if (genderStr === 'female' || genderStr === 'f') {
+          gender = 'Female';
+        } else if (genderStr === 'male' || genderStr === 'm') {
+          gender = 'Male';
+        }
+      }
 
       const dobRaw = colMap.dateOfBirth ? getVal(row, colMap.dateOfBirth) : null;
-      let dateOfBirth = dobRaw ? new Date(dobRaw) : new Date();
-      if (isNaN(dateOfBirth.getTime())) dateOfBirth = new Date();
+      let dateOfBirth = null;
+      if (dobRaw) {
+        const parsedDob = new Date(dobRaw);
+        if (!isNaN(parsedDob.getTime())) {
+          dateOfBirth = parsedDob;
+        }
+      }
 
       const rollNoRaw = colMap.rollNo ? getVal(row, colMap.rollNo) : null;
       const rollNo = rollNoRaw ? parseInt(rollNoRaw) || 0 : 0;

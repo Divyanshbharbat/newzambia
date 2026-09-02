@@ -126,6 +126,12 @@ export const downloadStudentsExcel = async () => {
   });
 };
 
+export const downloadStudentsCSV = async () => {
+  return await axios.get(`${root}/csvstudents`, {
+    responseType: 'blob',
+  });
+};
+
 export const uploadStudentsFile = async (file: File) => {
   const formData = new FormData();
   formData.append('file', file);

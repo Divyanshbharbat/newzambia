@@ -108,9 +108,14 @@ router.post("/students", async (req, res) => {
             return res.status(400).json({ error: `Roll Number ${finalRollNo} already exists for Class '${finalStandard}'.` });
         }
 
-        const validGender = (gender === "Female" || gender === "Male") ? gender : "Male";
-        let dob = dateOfBirth ? new Date(dateOfBirth) : new Date();
-        if (isNaN(dob.getTime())) dob = new Date();
+        const validGender = (gender === "Female" || gender === "Male") ? gender : (gender ? ((gender.toLowerCase() === "female" || gender.toLowerCase() === "f") ? "Female" : (gender.toLowerCase() === "male" || gender.toLowerCase() === "m") ? "Male" : null) : null);
+        let dob = null;
+        if (dateOfBirth) {
+            const parsedDob = new Date(dateOfBirth);
+            if (!isNaN(parsedDob.getTime())) {
+                dob = parsedDob;
+            }
+        }
 
         // Fetch bus station price if bus is accepted
         let busPriceValue = null;
@@ -492,7 +497,7 @@ router.put("/update/student/:id", async (req, res) => {
             data: {
                 fullName,
                 gender,
-                dateOfBirth: new Date(dateOfBirth),
+                dateOfBirth: (dateOfBirth && !isNaN(new Date(dateOfBirth).getTime())) ? new Date(dateOfBirth) : null,
                 rollNo: parseInt(rollNo),
                 nationality,
                 religion,

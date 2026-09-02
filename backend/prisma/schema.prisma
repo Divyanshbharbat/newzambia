@@ -10,8 +10,8 @@ datasource db {
 model Student {
   id                    Int                @id @default(autoincrement())
   fullName              String
-  gender                Gender
-  dateOfBirth           DateTime           @default(now()) @db.Date
+  gender                Gender?
+  dateOfBirth           DateTime?          @db.Date
   rollNo                Int
   standard              String
   bloodGroup            String?
