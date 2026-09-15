@@ -1,0 +1,36 @@
+.fee-container {
+  margin: 12px 0;
+  padding: 16px;
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.fee-header {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #0f172a;
+}
+
+.fee-form {
+  margin-bottom: 12px;
+}
+
+.fee-buttons {
+  margin-bottom: 8px;
+}
+
+.fee-buttons button:disabled {
+  background-color: #cbd5e1 !important;
+  cursor: not-allowed !important;
+}
+
+.import_export {
+  display: flex;
+  gap: 16px;
+}
+
+.innerbox {
+  flex: 1;
+}

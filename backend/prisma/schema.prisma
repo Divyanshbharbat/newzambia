@@ -1,0 +1,245 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id                    Int                @id @default(autoincrement())
+  fullName              String
+  gender                Gender?
+  dateOfBirth           DateTime?          @db.Date
+  rollNo                Int
+  standard              String
+  bloodGroup            String?
+  scholarshipApplied    Boolean
+  lunchAccepted         Boolean            @default(false)
+  lunchPrice            Float?
+  busAccepted           Boolean            @default(false)
+  busStationId          Int?
+  busPrice              Float?
+  residentialAddress    String?
+  correspondenceAddress String?
+  photoUrl              String?
+  remark                String?
+  nationality           String?
+  religion              String?
+  denomination          String?
+  language              String?
+  motherTongue          String?
+  status                StudentStatus      @default(None)
+  session               String
+  college               String
+  attendanceRecords     Attendance[]
+  fees                  Fee[]
+  marks                 Marks[]
+  parents               Parent[]
+  busStation            BusStation?        @relation(fields: [busStationId], references: [id])
+  studentInventory      StudentInventory[]
+
+  @@unique([standard, rollNo, session, college])
+}
+
+model Parent {
+  id                   Int     @id @default(autoincrement())
+  fatherName           String
+  motherName           String
+  fatherContact        BigInt
+  motherContact        BigInt
+  distanceFromSchool   Float?
+  preferredPhoneNumber BigInt?
+  address              String
+  studentId            Int
+  student              Student @relation(fields: [studentId], references: [id])
+}
+
+model Fee {
+  id            Int      @id @default(autoincrement())
+  title         String
+  amount        Float
+  amountDate    DateTime @default(now()) @db.Date
+  admissionDate DateTime @default(now()) @db.Date
+  studentId     Int
+  college       String
+  student       Student  @relation(fields: [studentId], references: [id])
+}
+
+model Attendance {
+  id          Int      @id @default(autoincrement())
+  studentName String
+  date        DateTime @default(now())
+  status      Boolean
+  rollNo      Int
+  studentId   Int
+  subjectId   Int?
+  standard    String
+  subjectName String?
+  session     String
+  college     String
+  student     Student  @relation(fields: [studentId], references: [id])
+  subject     Subject? @relation(fields: [subjectId], references: [id])
+}
+
+model Marks {
+  id              Int     @id @default(autoincrement())
+  studentId       Int
+  subjectId       Int
+  subjectName     String
+  examinationType String
+  obtainedMarks   Float
+  totalMarks      Float
+  percentage      Float
+  college         String
+  student         Student @relation(fields: [studentId], references: [id])
+  subject         Subject @relation(fields: [subjectId], references: [id])
+
+  @@unique([studentId, subjectId, examinationType, college])
+}
+
+model Hostel {
+  id         Int    @id @unique @default(autoincrement())
+  name       String
+  rollNo     Int
+  standard   String
+  gender     String
+  bed_number Int
+  college    String
+
+  @@unique([rollNo, standard, college])
+  @@unique([bed_number, college])
+}
+
+model Subject {
+  id                Int          @id @default(autoincrement())
+  name              String
+  stdId             Int
+  college           String
+  attendanceRecords Attendance[]
+  marks             Marks[]
+  std               Standards    @relation(fields: [stdId], references: [id])
+
+  @@unique([name, stdId, college])
+}
+
+model Standards {
+  id        Int       @unique @default(autoincrement())
+  std       String
+  category  String?
+  totalFees Float?
+  college   String
+  subjects  Subject[]
+
+  @@unique([std, category, college])
+}
+
+model StandardCategory {
+  id      Int    @id @default(autoincrement())
+  name    String
+  college String
+
+  @@unique([name, college])
+}
+
+model Control {
+  id                      Int      @id @default(autoincrement())
+  sessionId               Int?
+  college                 String?
+  number_of_hostel_bed    Int?
+  Institution_name        String?  @default("School")
+  Institution_hostel_name String?  @default("Hostel")
+  SchoolLogo              String?
+  SchoolAddress           String?
+  TotalFees               Int?
+  lunchFee                Float?
+  session                 Session? @relation(fields: [sessionId], references: [id])
+
+  @@unique([sessionId, college])
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  year      String
+  college   String
+  createdAt DateTime @default(now())
+  controls  Control[]
+
+  @@unique([year, college])
+}
+
+model Installments {
+  id           Int    @id @default(autoincrement())
+  installments String
+  college      String
+
+  @@unique([installments, college])
+}
+
+model Inventory {
+  id               Int                @id @default(autoincrement())
+  itemName         String
+  category         String
+  price            Float
+  quantity         Int?
+  size             String?
+  description      String?
+  gender           String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  college          String
+  studentInventory StudentInventory[]
+}
+
+model StudentInventory {
+  id                Int       @id @default(autoincrement())
+  studentId         Int
+  inventoryId       Int
+  quantityPurchased Int
+  totalPrice        Float
+  purchaseDate      DateTime  @default(now())
+  inventory         Inventory @relation(fields: [inventoryId], references: [id])
+  student           Student   @relation(fields: [studentId], references: [id])
+
+  @@unique([studentId, inventoryId])
+}
+
+model BusStation {
+  id          Int       @id @default(autoincrement())
+  stationName String
+  price       Float
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  college     String
+  students    Student[]
+
+  @@unique([stationName, college])
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  username String
+  password String
+  role     String // "admin" or "teacher"
+  college  String?
+
+  @@unique([username, college])
+}
+
+model College {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+}
+
+enum Gender {
+  Male
+  Female
+}
+
+enum StudentStatus {
+  Passed
+  Failed
+  None
+}

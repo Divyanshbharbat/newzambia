@@ -1,0 +1,38 @@
+.selectB{
+  margin-bottom: 6px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  
+}
+
+.occupied {
+  margin-top: 20px;
+}
+
+.occupied p {
+  margin: 5px 0;
+}
+
+.import_export {
+  display: flex;
+  
+}
+
+.innerbox{
+  width : 50%;
+  margin: 2px;
+}
+
+/* Beds Management Styling */
+.bed-available {
+  background-color: #1e3a8a !important; /* Dark Blue */
+  color: #fff !important;
+}
+
+.bed-occupied {
+  background-color: #ec4899 !important; /* Tailwind Pink 500 */
+  color: #fff !important;
+}

@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body,html {
+    margin: 0;
+    padding: 0;
+    font-family:Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale; 
+}
+
+@layer base {
+
+  /* Restyled Inputs - More compact with consistent spacing */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]):not([type="file"]),
+  select,
+  textarea {
+    min-height: 38px; /* Slightly reduced height */
+    padding: 8px 12px; /* Smaller internal padded gap */
+    box-sizing: border-box; 
+    line-height: normal; 
+    margin: 6px 8px 14px 0; /* Forces a consistent gap to prevent crowding */
+    border-radius: 4px;
+  }
+
+  /* Global Button Design Standardization - More Compact */
+  button, 
+  input[type="submit"], 
+  input[type="button"],
+  input[type="reset"] {
+    background-color: #313970 !important; 
+    color: #ffffff !important; 
+    padding: 8px 18px !important; /* Reduced button padding globally */
+    font-weight: 500 !important; /* Slightly bolder text for buttons */
+    border-radius: 4px !important; 
+    border: none !important; 
+    cursor: pointer !important; 
+    transition: background-color 0.2s ease-in-out !important; 
+    display: inline-block;
+    margin: 6px 8px 12px 0 !important; /* Provides breathing room so they aren't glued to inputs */
+  }
+
+  /* Button Hover State */
+  button:hover, 
+  input[type="submit"]:hover, 
+  input[type="button"]:hover,
+  input[type="reset"]:hover {
+    background-color: #242a53 !important; 
+  }
+
+  /* Reusable layout class to properly align and space out action items like buttons and inputs next to text */
+  .action-button-container {
+    display: flex;
+    align-items: center;
+    gap: 16px; /* Clean, consistent spacing between items */
+    margin-top: 10px; /* Gives nice breathing room away from the previous text/heading */
+    margin-bottom: 20px;
+    flex-wrap: wrap; /* Allows safe wrapping on smaller screens */
+  }
+
+  .file-input-wrapper input[type="file"] {
+    margin: 0;
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+  }
+}
+

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Subject" ADD COLUMN     "totalMarks" DOUBLE PRECISION DEFAULT 100;

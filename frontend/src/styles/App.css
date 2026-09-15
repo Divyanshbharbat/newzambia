@@ -1,0 +1,106 @@
+.App {
+  min-height: 100vh;
+  display: flex;
+}
+
+.toggle-button {
+  transition: background-color 0.3s ease;
+}
+
+.toggle-button:hover {
+  background-color: #768ae5;
+}
+
+.navbar-hidden {
+  display: none;
+}
+
+.content-wrapper {
+  flex: 1;
+  padding: 14px 20px;
+  background-color: #fff;
+  min-height: calc(100vh - 60px);
+  box-sizing: border-box;
+}
+
+ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+li {
+  margin: 6px 0;
+}
+
+.global-container {
+  background-color: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 14px 18px;
+}
+
+button {
+  font-family: Cambria, Cochin, Georgia, Times, 'Times New Roman', serif;
+  margin-top: 8px;
+  padding: 8px 18px;
+  border: none;
+  background-color: #313970;
+  color: white;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+button:hover {
+  background-color: rgba(10, 8, 8, 0.855);
+}
+
+
+.class-dropdown {
+  padding: 4px;
+  margin: 0px 10px;
+}
+
+input {
+  margin: 10px 0px;
+}
+
+.CustomButton{
+  width: max-content;
+}
+
+/* Login Page */
+
+.login {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.login button {
+  width: 270px;
+  padding: 10px;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 10px;
+  transition: background-color 0.3s ease;
+}
+
+input.StudentInput,
+input[type="date"],
+input[type="number"],
+input[type="text"],
+input[type="password"],
+select,
+textarea {
+  width: 100%;
+  padding: 8px;
+  background-color: ghostwhite;
+  margin-top: 5px;
+  border: 2px solid darkslateblue;
+  box-sizing: border-box;
+}

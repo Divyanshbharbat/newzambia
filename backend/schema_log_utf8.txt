@@ -1,0 +1,155 @@
+﻿commit 5a7f35bf67d98a911b1950f665e7f789c79f6cef
+Author: Divyansh Bharbat <bharbatdivyansh1@gmail.com>
+Date:   Wed Feb 25 22:14:25 2026 +0530
+
+    Initial commit: Added dummy student seeding and optimized chatbot performance/clarity
+
+diff --git a/backend/prisma/schema.prisma b/backend/prisma/schema.prisma
+new file mode 100644
+index 0000000..aa9dcb8
+--- /dev/null
++++ b/backend/prisma/schema.prisma
+@@ -0,0 +1,143 @@
++generator client {
++  provider = "prisma-client-js"
++}
++
++datasource db {
++  provider = "postgresql"
++  url      = env("DATABASE_URL")
++}
++
++model Student {
++  id                 Int           @id @default(autoincrement())
++  fullName           String
++  gender             Gender
++  dateOfBirth        DateTime      @default(now()) @db.Date
++  rollNo             Int
++  standard           String
++  adhaarCardNo       BigInt
++  scholarshipApplied Boolean
++  remark             String?
++  address            String
++  photoUrl           String?
++  status             StudentStatus @default(None)
++  session            String
++  category           String
++  caste              String
++  attendanceRecords  Attendance[]
++  fees               Fee[]
++  marks              Marks[]
++  parents            Parent[]
++
++  @@unique([standard, rollNo, session])
++}
++
++model Parent {
++  id               Int     @id @default(autoincrement())
++  fatherName       String
++  fatherOccupation String
++  motherName       String
++  motherOccupation String
++  fatherContact    BigInt
++  motherContact    BigInt
++  address          String
++  studentId        Int
++  student          Student @relation(fields: [studentId], references: [id])
++}
++
++model Fee {
++  id            Int      @id @default(autoincrement())
++  title         String
++  amount        Float
++  amountDate    DateTime @default(now()) @db.Date
++  admissionDate DateTime @default(now()) @db.Date
++  studentId     Int
++  student       Student  @relation(fields: [studentId], references: [id])
++}
++
++model Attendance {
++  id          Int      @id @default(autoincrement())
++  studentName String
++  date        DateTime @default(now())
++  status      Boolean
++  rollNo      Int
++  studentId   Int
++  subjectId   Int?
++  standard    String
++  subjectName String?
++  session     String
++  student     Student  @relation(fields: [studentId], references: [id])
++  subject     Subject? @relation(fields: [subjectId], references: [id])
++}
++
++model Marks {
++  id              Int     @id @default(autoincrement())
++  studentId       Int
++  subjectId       Int
++  subjectName     String
++  examinationType String
++  obtainedMarks   Float
++  totalMarks      Float
++  percentage      Float
++  student         Student @relation(fields: [studentId], references: [id])
++  subject         Subject @relation(fields: [subjectId], references: [id])
++
++  @@unique([studentId, subjectId, examinationType])
++}
++
++model Hostel {
++  id         Int    @id @unique @default(autoincrement())
++  name       String
++  rollNo     Int
++  standard   String
++  gender     String
++  bed_number Int    @unique
++
++  @@unique([rollNo, standard])
++}
++
++model Subject {
++  id                Int          @id @default(autoincrement())
++  name              String
++  stdId             String
++  attendanceRecords Attendance[]
++  marks             Marks[]
++  std               Standards    @relation(fields: [stdId], references: [std])
++}
++
++model Standards {
++  id       Int       @unique @default(autoincrement())
++  std      String    @unique
++  subjects Subject[]
++}
++
++model Control {
++  id                      Int     @unique @default(autoincrement())
++  number_of_hostel_bed    Int?
++  Institution_name        String? @default("School")
++  Institution_hostel_name String? @default("Hostel")
++  SchoolLogo              String?
++  SchoolAddress           String?
++  TotalFees               Int?
++}
++
++model Session {
++  id        Int      @id @default(autoincrement())
++  year      String   @unique
++  createdAt DateTime @default(now())
++}
++
++model Installments {
++  id           Int    @id @default(autoincrement())
++  installments String @unique
++}
++
++enum Gender {
++  Male
++  Female
++}
++
++enum StudentStatus {
++  Passed
++  Failed
++  None
++}

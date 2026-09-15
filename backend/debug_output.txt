@@ -1,0 +1,88 @@
+--- COLLEGE TABLE ---
+[
+  {
+    "id": 1,
+    "name": "svpcet"
+  },
+  {
+    "id": 2,
+    "name": "new colege"
+  }
+]
+
+--- USERS ---
+[
+  {
+    "username": "admin",
+    "role": "admin",
+    "college": "svpcet"
+  },
+  {
+    "username": "divyansh",
+    "role": "admin",
+    "college": "new colege"
+  },
+  {
+    "username": "teacher",
+    "role": "teacher",
+    "college": "new colege"
+  }
+]
+
+--- STUDENT COUNT BY COLLEGE ---
+[
+  {
+    "_count": {
+      "_all": 1
+    },
+    "college": "new colege"
+  },
+  {
+    "_count": {
+      "_all": 2
+    },
+    "college": "svpcet"
+  }
+]
+
+--- STUDENT COUNT BY SESSION ---
+[
+  {
+    "_count": {
+      "_all": 2
+    },
+    "session": "2027-2028"
+  },
+  {
+    "_count": {
+      "_all": 1
+    },
+    "session": "2024-2025"
+  }
+]
+
+--- RECENT STUDENTS ---
+[
+  {
+    "fullName": "divyansh",
+    "rollNo": 40,
+    "standard": "4",
+    "session": "2024-2025",
+    "college": "new colege"
+  },
+  {
+    "fullName": "divyansh bharbat",
+    "rollNo": 40,
+    "standard": "1",
+    "session": "2027-2028",
+    "college": "svpcet"
+  },
+  {
+    "fullName": "Student One",
+    "rollNo": 101,
+    "standard": "1",
+    "session": "2027-2028",
+    "college": "svpcet"
+  }
+]
+
