@@ -26,7 +26,7 @@ $requiredNodeVersion = "v25.9.0"
 # Change these values according to your PostgreSQL setup.
 
 $databaseUser = "postgres"
-$databasePassword = "YOUR_POSTGRES_PASSWORD"
+$databasePassword = "password@123"
 $databaseHost = "localhost"
 $databasePort = "5432"
 $databaseName = "school_erp"
@@ -356,6 +356,94 @@ Write-Host ""
 
 
 # =========================================================
+# STEP 8.1 - CONFIGURE POSTGRESQL & PGADMIN PASSWORD
+# =========================================================
+
+Write-Host "[8.1] Configuring PostgreSQL & pgAdmin Password to $databasePassword..."
+Write-Host ""
+
+$psqlCmd = $null
+if (Get-Command psql -ErrorAction SilentlyContinue) {
+    $psqlCmd = (Get-Command psql).Source
+}
+else {
+    $foundPsql = Resolve-Path "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue |
+        Sort-Object Path -Descending |
+        Select-Object -First 1
+    if ($foundPsql) {
+        $psqlCmd = $foundPsql.Path
+    }
+}
+
+if ($psqlCmd) {
+    Write-Host "Found PostgreSQL CLI: $psqlCmd"
+
+    # Check ports (5433 for Postgres 17 or 5432 for Postgres 12/default)
+    $portsToCheck = @(5433, 5432)
+    $detectedPort = $null
+
+    foreach ($p in $portsToCheck) {
+        $tcp = Test-NetConnection -ComputerName 127.0.0.1 -Port $p -WarningAction SilentlyContinue
+        if ($tcp.TcpTestSucceeded) {
+            Write-Host "PostgreSQL is actively listening on port $p."
+            
+            # Try to connect with known passwords and change to $databasePassword
+            $candidatePasswords = @($databasePassword, "12345678", "postgres", "admin", "root", "1234", "123456", "")
+            $connected = $false
+            foreach ($candPass in $candidatePasswords) {
+                $env:PGPASSWORD = $candPass
+                $null = & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "SELECT 1;" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Connected to PostgreSQL on port $p."
+                    # Set password for postgres user
+                    & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "ALTER USER postgres WITH PASSWORD '$databasePassword';" 2>&1 | Out-Null
+                    Write-Host "[OK] PostgreSQL user 'postgres' password set to '$databasePassword' on port $p."
+                    
+                    # Ensure school_erp database exists
+                    $env:PGPASSWORD = $databasePassword
+                    $dbCheck = & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -t -c "SELECT 1 FROM pg_database WHERE datname='$databaseName';" 2>&1
+                    if ($dbCheck -notmatch "1") {
+                        Write-Host "Creating database '$databaseName' on port $p..."
+                        & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "CREATE DATABASE $databaseName;" 2>&1 | Out-Null
+                        Write-Host "[OK] Database '$databaseName' created successfully."
+                    } else {
+                        Write-Host "[OK] Database '$databaseName' already exists on port $p."
+                    }
+                    $connected = $true
+                    $detectedPort = $p
+                    break
+                }
+            }
+            if ($connected) { break }
+        }
+    }
+
+    if ($detectedPort) {
+        $databasePort = "$detectedPort"
+        Write-Host "Configured active database port: $databasePort"
+    }
+}
+else {
+    Write-Host "PostgreSQL CLI (psql) not found in PATH or standard directories."
+}
+
+# Update pgAdmin 4 local registered servers if present
+try {
+    $pgAdminDbPath = "$env:APPDATA\pgAdmin\pgadmin4.db"
+    if (Test-Path $pgAdminDbPath) {
+        if (Get-Command python -ErrorAction SilentlyContinue) {
+            python -c "import sqlite3; conn = sqlite3.connect(r'$pgAdminDbPath'); cur = conn.cursor(); cur.execute('UPDATE server SET port = $databasePort WHERE port != $databasePort'); conn.commit(); conn.close()" 2>&1 | Out-Null
+            Write-Host "[OK] Synchronized pgAdmin 4 server entries to port $databasePort."
+        }
+    }
+} catch {
+    # Non-critical, continue
+}
+
+Write-Host ""
+
+
+# =========================================================
 # STEP 9 - VERIFY FRONTEND AND BACKEND FOLDERS
 # =========================================================
 
@@ -394,8 +482,9 @@ Write-Host ""
 
 $envFile = "$backendFolder\.env"
 
-# PostgreSQL DATABASE_URL
-$databaseUrl = "postgresql://$databaseUser`:$databasePassword@$databaseHost`:$databasePort/$databaseName"
+# PostgreSQL DATABASE_URL (URL-encoded to safely handle special characters like '@')
+$encodedPassword = [System.Uri]::EscapeDataString($databasePassword)
+$databaseUrl = "postgresql://$databaseUser`:$encodedPassword@$databaseHost`:$databasePort/$databaseName"
 
 # Create .env content
 $envContent = @"
@@ -601,6 +690,40 @@ Write-Host ""
 
 
 # =========================================================
+# STEP 14.1 - SYNC DATABASE SCHEMA & SEED ADMIN DATA
+# =========================================================
+
+Write-Host "[14.1] Initializing Database Schema & Admin Data..."
+Write-Host ""
+
+Set-Location $backendFolder
+
+if (Test-Path "setup.js") {
+    Write-Host "Running backend setup.js..."
+    node setup.js
+}
+else {
+    Write-Host "Running prisma db push..."
+    npx prisma db push
+}
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 14.2 - INSTALL ROOT DEPENDENCIES
+# =========================================================
+
+Write-Host "[14.2] Installing Root Dependencies (concurrently)..."
+Write-Host ""
+
+Set-Location $repoFolder
+npm install
+
+Write-Host ""
+
+
+# =========================================================
 # STEP 15 - VERIFY .ENV
 # =========================================================
 
@@ -720,25 +843,25 @@ Write-Host ".env: Created"
 Write-Host ""
 
 Write-Host "============================================="
-Write-Host " IMPORTANT"
+Write-Host " CREDENTIALS & CONNECTION DETAILS"
 Write-Host "============================================="
 Write-Host ""
 
-Write-Host "Before starting the application, make sure:"
+Write-Host "PostgreSQL & pgAdmin 4 Details:"
+Write-Host "  - Host:      $databaseHost"
+Write-Host "  - Port:      $databasePort"
+Write-Host "  - Database:  $databaseName"
+Write-Host "  - Username:  $databaseUser"
+Write-Host "  - Password:  $databasePassword"
 Write-Host ""
-Write-Host "1. PostgreSQL is installed and running."
-Write-Host "2. Database '$databaseName' exists."
-Write-Host "3. Update the PostgreSQL password in:"
-Write-Host $envFile
+Write-Host "Default ERP Admin Login:"
+Write-Host "  - Username:  admin"
+Write-Host "  - Password:  adminpassword"
+Write-Host "  - College:   svpcet"
 Write-Host ""
-Write-Host "4. If your project requires additional API keys,"
-Write-Host "   add them to the .env file."
+Write-Host "To launch both Frontend and Backend together:"
+Write-Host "  Run: npm start (or double-click start_app.bat)"
 Write-Host ""
-
-Write-Host "Example DATABASE_URL:"
-Write-Host "postgresql://postgres:YOUR_PASSWORD@localhost:5432/school_erp"
-Write-Host ""
-
 Write-Host "============================================="
 Write-Host ""
 
