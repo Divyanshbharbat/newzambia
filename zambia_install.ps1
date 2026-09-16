@@ -1,36 +1,68 @@
-$ErrorActionPreference = "Stop" 
+$ErrorActionPreference = "Stop"
 
 Write-Host ""
-Write-Host "=============================================" 
-Write-Host " School ERP Setup" 
 Write-Host "============================================="
-Write-Host "" 
+Write-Host "           School ERP Setup"
+Write-Host "============================================="
+Write-Host ""
 
-# ========================================================= 
-# CONFIGURATION 
-# ========================================================= 
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
-$repoUrl = "https://github.com/Divyanshbharbat/newzambia.git" 
-$baseFolder = "C:\school_erp" 
-$repoFolder = "C:\school_erp\newzambia" 
+$repoUrl = "https://github.com/Divyanshbharbat/newzambia.git"
 
-$requiredNodeVersion = "v25.9.0" 
+$baseFolder = "C:\school_erp"
+$repoFolder = "C:\school_erp\newzambia"
 
-# ========================================================= 
-# STEP 1 - CHECK GIT 
-# ========================================================= 
+$frontendFolder = "$repoFolder\frontend"
+$backendFolder = "$repoFolder\backend"
+
+$requiredNodeVersion = "v25.9.0"
+
+# =========================================================
+# .ENV CONFIGURATION
+# =========================================================
+# Change these values according to your PostgreSQL setup.
+
+$databaseUser = "postgres"
+$databasePassword = "YOUR_POSTGRES_PASSWORD"
+$databaseHost = "localhost"
+$databasePort = "5432"
+$databaseName = "school_erp"
+
+$backendPort = "5000"
+
+# JWT secret used by the backend
+$jwtSecret = "school_erp_jwt_secret_change_this"
+
+# Frontend URL
+$frontendUrl = "http://localhost:5173"
+
+# =========================================================
+# STEP 1 - CHECK GIT
+# =========================================================
 
 Write-Host "[1] Checking Git..."
 Write-Host ""
 
 if (Get-Command git -ErrorAction SilentlyContinue) {
+
     $gitVersion = git --version
-    Write-Host "Git is already installed: $gitVersion"
+
+    Write-Host "Git is already installed:"
+    Write-Host $gitVersion
+
 }
 else {
-    Write-Host "Git is NOT installed. Installing Git..."
+
+    Write-Host "Git is NOT installed."
+    Write-Host "Installing Git..."
+
     if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
+
         throw "Git is not installed and Windows Package Manager (winget) is not available. Please install Git manually."
+
     }
 
     winget install --id Git.Git `
@@ -40,200 +72,676 @@ else {
         --accept-package-agreements
 
     if ($LASTEXITCODE -ne 0) {
+
         throw "Git installation failed."
+
     }
 
     Write-Host "Git installation completed."
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+    # Refresh PATH
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path", "User")
+
 }
 
 Write-Host ""
 Write-Host "---------------------------------------------"
 Write-Host ""
 
-# ========================================================= 
-# STEP 2 - CREATE school_erp FOLDER 
-# ========================================================= 
 
-Write-Host "[2] Creating school_erp folder..." 
-if (!(Test-Path $baseFolder)) { 
-    New-Item -ItemType Directory -Path $baseFolder | Out-Null 
-    Write-Host "Created: $baseFolder" 
-} else { 
-    Write-Host "Folder already exists: $baseFolder" 
-} 
+# =========================================================
+# STEP 2 - CREATE school_erp FOLDER
+# =========================================================
 
-Write-Host "" 
+Write-Host "[2] Creating school_erp folder..."
+Write-Host ""
 
-# ========================================================= 
-# STEP 3 - CLONE REPOSITORY 
-# ========================================================= 
+if (!(Test-Path $baseFolder)) {
 
-Write-Host "[3] Cloning NewZambia repository..." 
-Write-Host "" 
-Set-Location $baseFolder 
+    New-Item -ItemType Directory -Path $baseFolder | Out-Null
 
-if (Test-Path $repoFolder) { 
-    Write-Host "Repository already exists: $repoFolder" 
-    Write-Host "Skipping clone." 
-} else { 
-    git clone $repoUrl 
-    if ($LASTEXITCODE -ne 0) { 
-        throw "Git clone failed." 
-    } 
-    Write-Host "Git clone completed successfully." 
-} 
-Write-Host "" 
+    Write-Host "Created:"
+    Write-Host $baseFolder
 
-# ========================================================= 
-# STEP 4 - VERIFY CLONED FOLDER 
-# ========================================================= 
+}
+else {
 
-Write-Host "[4] Verifying repository..." 
-if (!(Test-Path $repoFolder)) { 
-    throw "ERROR: NewZambia repository folder was not created." 
-} 
+    Write-Host "Folder already exists:"
+    Write-Host $baseFolder
 
-Write-Host "Repository found: $repoFolder" 
-Write-Host "" 
+}
 
-# ========================================================= 
-# STEP 5 - CHECK NODE.JS 
-# ========================================================= 
+Write-Host ""
 
-Write-Host "[5] Checking Node.js..." 
-Write-Host "" 
-$nodeExists = Get-Command node -ErrorAction SilentlyContinue 
+
+# =========================================================
+# STEP 3 - CLONE REPOSITORY
+# =========================================================
+
+Write-Host "[3] Cloning NewZambia repository..."
+Write-Host ""
+
+Set-Location $baseFolder
+
+if (Test-Path $repoFolder) {
+
+    Write-Host "Repository already exists:"
+    Write-Host $repoFolder
+    Write-Host "Skipping clone."
+
+}
+else {
+
+    git clone $repoUrl
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "Git clone failed."
+
+    }
+
+    Write-Host "Git clone completed successfully."
+
+}
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 4 - VERIFY REPOSITORY
+# =========================================================
+
+Write-Host "[4] Verifying repository..."
+Write-Host ""
+
+if (!(Test-Path $repoFolder)) {
+
+    throw "ERROR: NewZambia repository folder was not created."
+
+}
+
+Write-Host "Repository found:"
+Write-Host $repoFolder
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 5 - CHECK NODE.JS
+# =========================================================
+
+Write-Host "[5] Checking Node.js..."
+Write-Host ""
+
+$nodeExists = Get-Command node -ErrorAction SilentlyContinue
+
 if ($nodeExists) {
-    $currentNodeVersion = node --version 
-    Write-Host "Installed Node.js version: $currentNodeVersion" 
-    Write-Host "Required Node.js version: $requiredNodeVersion" 
-    
-    if ($currentNodeVersion -eq $requiredNodeVersion) { 
-        Write-Host "Correct Node.js version is already installed." 
-    } else { 
-        Write-Host "Node.js version differs (Installed: $currentNodeVersion, Target: $requiredNodeVersion)." 
-    } 
-} else { 
-    Write-Host "Node.js is not installed." 
-} 
-Write-Host "" 
 
-# ========================================================= 
-# STEP 6 - INSTALL NODE.JS IF MISSING 
-# ========================================================= 
+    $currentNodeVersion = node --version
 
-if (!$nodeExists) { 
-    Write-Host "[6] Installing Node.js..." 
-    winget install OpenJS.NodeJS --accept-source-agreements --accept-package-agreements 
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User") 
-} else { 
-    Write-Host "[6] Node.js installation skipped." 
-} 
-Write-Host "" 
+    Write-Host "Installed Node.js version:"
+    Write-Host $currentNodeVersion
 
-# ========================================================= 
-# STEP 7 - INSTALL VS CODE 
-# ========================================================= 
+    Write-Host "Required Node.js version:"
+    Write-Host $requiredNodeVersion
 
-Write-Host "[7] Checking Visual Studio Code..." 
+    if ($currentNodeVersion -eq $requiredNodeVersion) {
+
+        Write-Host "Correct Node.js version is already installed."
+
+    }
+    else {
+
+        Write-Host ""
+        Write-Host "WARNING:"
+        Write-Host "Installed Node.js version differs from required version."
+        Write-Host "The script will continue using the installed Node.js."
+
+    }
+
+}
+else {
+
+    Write-Host "Node.js is not installed."
+
+}
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 6 - INSTALL NODE.JS IF MISSING
+# =========================================================
+
+if (!$nodeExists) {
+
+    Write-Host "[6] Installing Node.js..."
+    Write-Host ""
+
+    if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
+
+        throw "winget is not available. Please install Node.js manually."
+
+    }
+
+    winget install OpenJS.NodeJS `
+        --accept-source-agreements `
+        --accept-package-agreements
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "Node.js installation failed."
+
+    }
+
+    # Refresh PATH
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+    Write-Host "Node.js installation completed."
+
+}
+else {
+
+    Write-Host "[6] Node.js installation skipped."
+
+}
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 7 - INSTALL VISUAL STUDIO CODE
+# =========================================================
+
+Write-Host "[7] Checking Visual Studio Code..."
+Write-Host ""
+
 if (Get-Command code -ErrorAction SilentlyContinue) {
+
     Write-Host "Visual Studio Code is already installed."
-} else {
+
+}
+else {
+
+    Write-Host "Visual Studio Code is not installed."
     Write-Host "Installing Visual Studio Code..."
+
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Microsoft.VisualStudioCode --exact --source winget --accept-source-agreements --accept-package-agreements
+
+        winget install `
+            --id Microsoft.VisualStudioCode `
+            --exact `
+            --source winget `
+            --accept-source-agreements `
+            --accept-package-agreements
+
         if ($LASTEXITCODE -eq 0) {
+
             Write-Host "Visual Studio Code installation completed successfully."
-        } else {
-            Write-Host "VS Code installation via winget exited with code $LASTEXITCODE."
+
         }
-    } else {
-        Write-Host "winget not available. Please install Visual Studio Code manually from https://code.visualstudio.com/"
+        else {
+
+            Write-Host "VS Code installation exited with code $LASTEXITCODE."
+
+        }
+
     }
+    else {
+
+        Write-Host "winget is not available."
+        Write-Host "Please install Visual Studio Code manually."
+
+    }
+
 }
-Write-Host "" 
 
-# ========================================================= 
-# STEP 8 - INSTALL PGADMIN 4 
-# ========================================================= 
+Write-Host ""
 
-Write-Host "[8] Checking pgAdmin..." 
-if ((Get-Command pgadmin4 -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files\pgAdmin 4") -or (Test-Path "C:\Program Files (x86)\pgAdmin 4")) {
+
+# =========================================================
+# STEP 8 - INSTALL PGADMIN 4
+# =========================================================
+
+Write-Host "[8] Checking pgAdmin..."
+Write-Host ""
+
+if (
+    (Get-Command pgadmin4 -ErrorAction SilentlyContinue) -or
+    (Test-Path "C:\Program Files\pgAdmin 4") -or
+    (Test-Path "C:\Program Files (x86)\pgAdmin 4")
+) {
+
     Write-Host "pgAdmin is already installed."
-} else {
+
+}
+else {
+
+    Write-Host "pgAdmin is not installed."
     Write-Host "Installing pgAdmin 4..."
+
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id pgAdmin.pgAdmin4 --exact --source winget --accept-source-agreements --accept-package-agreements
+
+        winget install `
+            --id pgAdmin.pgAdmin4 `
+            --exact `
+            --source winget `
+            --accept-source-agreements `
+            --accept-package-agreements
+
         if ($LASTEXITCODE -eq 0) {
+
             Write-Host "pgAdmin 4 installation completed successfully."
-        } else {
-            Write-Host "pgAdmin 4 installation via winget exited with code $LASTEXITCODE."
+
         }
-    } else {
-        Write-Host "winget not available. Please install pgAdmin 4 manually from https://www.pgadmin.org/download/"
+        else {
+
+            Write-Host "pgAdmin installation exited with code $LASTEXITCODE."
+
+        }
+
     }
+    else {
+
+        Write-Host "winget is not available."
+        Write-Host "Please install pgAdmin 4 manually."
+
+    }
+
 }
-Write-Host "" 
 
-# ========================================================= 
-# STEP 9 - FRONTEND DEPENDENCIES 
-# ========================================================= 
+Write-Host ""
 
-Write-Host "[9] Installing FRONTEND dependencies..."
-$frontendFolder = "$repoFolder\frontend" 
 
-if (!(Test-Path $frontendFolder)) { 
-    throw "Frontend folder not found: $frontendFolder" 
-} 
-Set-Location $frontendFolder 
-Write-Host "Running npm install..." 
-npm install 
-if ($LASTEXITCODE -ne 0) { 
-    throw "Frontend npm install FAILED." 
-} 
-Write-Host "Frontend npm install completed." 
-Write-Host "" 
+# =========================================================
+# STEP 9 - VERIFY FRONTEND AND BACKEND FOLDERS
+# =========================================================
 
-# ========================================================= 
-# STEP 10 - BACKEND DEPENDENCIES 
-# ========================================================= 
+Write-Host "[9] Verifying project folders..."
+Write-Host ""
 
-Write-Host "[10] Installing BACKEND dependencies..." 
-$backendFolder = "$repoFolder\backend" 
-if (!(Test-Path $backendFolder)) { 
-    throw "Backend folder not found: $backendFolder" 
-} 
-Set-Location $backendFolder 
-Write-Host "Running npm install..." 
-npm install 
+if (!(Test-Path $frontendFolder)) {
 
-$env:NODE_TLS_REJECT_UNAUTHORIZED="0"
-if (Test-Path "$backendFolder\node_modules\prisma\build\index.js") {
-    node node_modules/prisma/build/index.js generate
-} else {
-    npx prisma generate
+    throw "Frontend folder not found: $frontendFolder"
+
 }
-$env:NODE_TLS_REJECT_UNAUTHORIZED="1"
 
-if ($LASTEXITCODE -ne 0) { 
-    throw "Backend npm install FAILED." 
-} 
-Write-Host "Backend npm install completed." 
-Write-Host "" 
+if (!(Test-Path $backendFolder)) {
 
-# ========================================================= 
-# COMPLETE 
-# ========================================================= 
+    throw "Backend folder not found: $backendFolder"
 
-Write-Host "=============================================" 
-Write-Host " SETUP COMPLETED SUCCESSFULLY" 
-Write-Host "=============================================" 
-Write-Host "" 
-Write-Host "Project location: $repoFolder" 
-Write-Host "VS Code: Installed / Available" 
-Write-Host "pgAdmin: Installed / Available" 
-Write-Host "Frontend: $frontendFolder" 
-Write-Host "Backend: $backendFolder" 
-Write-Host "" 
+}
+
+Write-Host "Frontend folder:"
+Write-Host $frontendFolder
+
+Write-Host ""
+
+Write-Host "Backend folder:"
+Write-Host $backendFolder
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 10 - CREATE BACKEND .ENV FILE
+# =========================================================
+
+Write-Host "[10] Creating backend .env file..."
+Write-Host ""
+
+$envFile = "$backendFolder\.env"
+
+# PostgreSQL DATABASE_URL
+$databaseUrl = "postgresql://$databaseUser`:$databasePassword@$databaseHost`:$databasePort/$databaseName"
+
+# Create .env content
+$envContent = @"
+DATABASE_URL="$databaseUrl"
+
+PORT=$backendPort
+
+JWT_SECRET="$jwtSecret"
+
+NODE_ENV="development"
+
+FRONTEND_URL="$frontendUrl"
+
+"@
+
+# Write .env
+Set-Content `
+    -Path $envFile `
+    -Value $envContent `
+    -Encoding UTF8
+
+if (!(Test-Path $envFile)) {
+
+    throw "Failed to create backend .env file."
+
+}
+
+Write-Host "Backend .env created successfully:"
+Write-Host $envFile
+
+Write-Host ""
+Write-Host "---------------------------------------------"
+Write-Host "Generated environment variables:"
+Write-Host "DATABASE_URL"
+Write-Host "PORT"
+Write-Host "JWT_SECRET"
+Write-Host "NODE_ENV"
+Write-Host "FRONTEND_URL"
+Write-Host "---------------------------------------------"
+Write-Host ""
+
+
+# =========================================================
+# STEP 11 - ADD .ENV TO .GITIGNORE
+# =========================================================
+
+Write-Host "[11] Protecting .env from Git..."
+Write-Host ""
+
+$gitignoreFile = "$backendFolder\.gitignore"
+
+if (Test-Path $gitignoreFile) {
+
+    $gitignoreContent = Get-Content $gitignoreFile -Raw
+
+}
+else {
+
+    $gitignoreContent = ""
+
+}
+
+if ($gitignoreContent -notmatch "(?m)^\.env$") {
+
+    Add-Content `
+        -Path $gitignoreFile `
+        -Value "`r`n# Environment variables`r`n.env`r`n"
+
+    Write-Host ".env added to backend .gitignore."
+
+}
+else {
+
+    Write-Host ".env is already protected by .gitignore."
+
+}
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 12 - INSTALL FRONTEND DEPENDENCIES
+# =========================================================
+
+Write-Host "[12] Installing FRONTEND dependencies..."
+Write-Host ""
+
+Set-Location $frontendFolder
+
+Write-Host "Frontend:"
+Write-Host $frontendFolder
+
+Write-Host ""
+
+Write-Host "Running npm install..."
+Write-Host ""
+
+npm install
+
+if ($LASTEXITCODE -ne 0) {
+
+    throw "Frontend npm install FAILED."
+
+}
+
+Write-Host ""
+Write-Host "Frontend npm install completed successfully."
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 13 - INSTALL BACKEND DEPENDENCIES
+# =========================================================
+
+Write-Host "[13] Installing BACKEND dependencies..."
+Write-Host ""
+
+Set-Location $backendFolder
+
+Write-Host "Backend:"
+Write-Host $backendFolder
+
+Write-Host ""
+
+Write-Host "Running npm install..."
+Write-Host ""
+
+npm install
+
+if ($LASTEXITCODE -ne 0) {
+
+    throw "Backend npm install FAILED."
+
+}
+
+Write-Host ""
+Write-Host "Backend npm install completed successfully."
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 14 - GENERATE PRISMA CLIENT
+# =========================================================
+
+Write-Host "[14] Generating Prisma Client..."
+Write-Host ""
+
+Set-Location $backendFolder
+
+# Temporarily disable TLS certificate verification.
+# This is only used for the Prisma generation step.
+$previousTlsSetting = $env:NODE_TLS_REJECT_UNAUTHORIZED
+
+$env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
+
+try {
+
+    if (Test-Path "$backendFolder\node_modules\prisma\build\index.js") {
+
+        Write-Host "Using local Prisma installation..."
+
+        node node_modules/prisma/build/index.js generate
+
+    }
+    else {
+
+        Write-Host "Local Prisma executable not found."
+        Write-Host "Using npx prisma generate..."
+
+        npx prisma generate
+
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+
+        throw "Prisma Client generation FAILED."
+
+    }
+
+}
+finally {
+
+    # Restore previous TLS setting
+    if ($null -eq $previousTlsSetting) {
+
+        Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue
+
+    }
+    else {
+
+        $env:NODE_TLS_REJECT_UNAUTHORIZED = $previousTlsSetting
+
+    }
+
+}
+
+Write-Host ""
+Write-Host "Prisma Client generated successfully."
+
+Write-Host ""
+
+
+# =========================================================
+# STEP 15 - VERIFY .ENV
+# =========================================================
+
+Write-Host "[15] Verifying .env file..."
+Write-Host ""
+
+if (!(Test-Path $envFile)) {
+
+    throw ".env file verification FAILED."
+
+}
+
+Write-Host ".env file exists:"
+Write-Host $envFile
+
+Write-Host ""
+
+# Check important variables without displaying passwords/secrets
+$envCheck = Get-Content $envFile -Raw
+
+if ($envCheck -match "DATABASE_URL=") {
+
+    Write-Host "[OK] DATABASE_URL"
+
+}
+else {
+
+    throw "DATABASE_URL is missing from .env"
+
+}
+
+if ($envCheck -match "PORT=") {
+
+    Write-Host "[OK] PORT"
+
+}
+else {
+
+    throw "PORT is missing from .env"
+
+}
+
+if ($envCheck -match "JWT_SECRET=") {
+
+    Write-Host "[OK] JWT_SECRET"
+
+}
+else {
+
+    throw "JWT_SECRET is missing from .env"
+
+}
+
+if ($envCheck -match "NODE_ENV=") {
+
+    Write-Host "[OK] NODE_ENV"
+
+}
+else {
+
+    throw "NODE_ENV is missing from .env"
+
+}
+
+if ($envCheck -match "FRONTEND_URL=") {
+
+    Write-Host "[OK] FRONTEND_URL"
+
+}
+else {
+
+    throw "FRONTEND_URL is missing from .env"
+
+}
+
+Write-Host ""
+
+
+# =========================================================
+# COMPLETE
+# =========================================================
+
+Write-Host ""
+Write-Host "============================================="
+Write-Host "       SETUP COMPLETED SUCCESSFULLY"
+Write-Host "============================================="
+Write-Host ""
+
+Write-Host "Project location:"
+Write-Host $repoFolder
+
+Write-Host ""
+
+Write-Host "Frontend:"
+Write-Host $frontendFolder
+
+Write-Host ""
+
+Write-Host "Backend:"
+Write-Host $backendFolder
+
+Write-Host ""
+
+Write-Host "Environment file:"
+Write-Host $envFile
+
+Write-Host ""
+
+Write-Host "VS Code: Installed / Available"
+Write-Host "pgAdmin: Installed / Available"
+Write-Host "Node.js: Installed / Available"
+Write-Host "Git: Installed / Available"
+Write-Host "Frontend dependencies: Installed"
+Write-Host "Backend dependencies: Installed"
+Write-Host "Prisma Client: Generated"
+Write-Host ".env: Created"
+Write-Host ""
+
+Write-Host "============================================="
+Write-Host " IMPORTANT"
+Write-Host "============================================="
+Write-Host ""
+
+Write-Host "Before starting the application, make sure:"
+Write-Host ""
+Write-Host "1. PostgreSQL is installed and running."
+Write-Host "2. Database '$databaseName' exists."
+Write-Host "3. Update the PostgreSQL password in:"
+Write-Host $envFile
+Write-Host ""
+Write-Host "4. If your project requires additional API keys,"
+Write-Host "   add them to the .env file."
+Write-Host ""
+
+Write-Host "Example DATABASE_URL:"
+Write-Host "postgresql://postgres:YOUR_PASSWORD@localhost:5432/school_erp"
+Write-Host ""
+
+Write-Host "============================================="
+Write-Host ""
+
+Set-Location $repoFolder
+
 Read-Host "Press Enter to exit"
