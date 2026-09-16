@@ -1,3 +1,7 @@
+# =========================================================
+# School ERP - Complete Windows Setup Script
+# =========================================================
+
 $ErrorActionPreference = "Stop"
 
 Write-Host ""
@@ -21,30 +25,20 @@ $backendFolder = "$repoFolder\backend"
 $requiredNodeVersion = "v25.9.0"
 
 # =========================================================
-# POSTGRESQL CONFIGURATION
+# DATABASE CONFIGURATION
 # =========================================================
 
 $databaseUser = "postgres"
+
+# Final PostgreSQL password
+$databasePassword = "password@123"
+
 $databaseHost = "localhost"
 $databasePort = "5432"
 $databaseName = "school_erp"
 
-# =========================================================
-# FINAL POSTGRESQL PASSWORD
-# =========================================================
-# No matter what the old password was,
-# the script will change it to this password.
-
-$databasePassword = "password@123"
-
-# IMPORTANT:
-# @ in password@123 becomes %40 inside DATABASE_URL
-
+# @ must be URL encoded in DATABASE_URL
 $databasePasswordEncoded = "password%40123"
-
-# =========================================================
-# BACKEND CONFIGURATION
-# =========================================================
 
 $backendPort = "5000"
 
@@ -52,9 +46,35 @@ $jwtSecret = "school_erp_jwt_secret_change_this"
 
 $frontendUrl = "http://localhost:5173"
 
+# =========================================================
+# CHECK ADMINISTRATOR
+# =========================================================
+
+Write-Host "[0] Checking Administrator privileges..."
+Write-Host ""
+
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+
+$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+
+$isAdmin = $principal.IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+
+if (!$isAdmin) {
+    Write-Host "ERROR: This script must be run as Administrator."
+    Write-Host ""
+    Write-Host "Right-click PowerShell -> Run as Administrator"
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+Write-Host "[OK] Administrator privileges detected."
+Write-Host ""
 
 # =========================================================
-# HELPER FUNCTION - REFRESH PATH
+# HELPER - REFRESH PATH
 # =========================================================
 
 function Refresh-Path {
@@ -72,12 +92,150 @@ function Refresh-Path {
     $env:Path = "$machinePath;$userPath"
 }
 
+# =========================================================
+# HELPER - FIND POSTGRESQL SERVICES
+# =========================================================
+
+function Get-PostgresServices {
+
+    return @(
+        Get-CimInstance Win32_Service |
+        Where-Object {
+            $_.Name -like "postgresql*" -or
+            $_.DisplayName -like "*PostgreSQL*"
+        }
+    )
+}
 
 # =========================================================
-# HELPER FUNCTION - FIND POSTGRESQL
+# HELPER - GET POSTGRESQL DATA DIRECTORY
 # =========================================================
 
-function Find-PostgresBin {
+function Get-PostgresDataDirectory {
+
+    param(
+        [Parameter(Mandatory=$true)]
+        $Service
+    )
+
+    $pathName = $Service.PathName
+
+    if (!$pathName) {
+        return $null
+    }
+
+    # Typical PostgreSQL Windows service:
+    #
+    # pg_ctl.exe runservice -N "postgresql-x64-17"
+    # -D "C:\Program Files\PostgreSQL\17\data"
+
+    if ($pathName -match '-D\s+"([^"]+)"') {
+
+        return $matches[1]
+    }
+
+    if ($pathName -match '-D\s+([^\s]+)') {
+
+        return $matches[1]
+    }
+
+    return $null
+}
+
+# =========================================================
+# HELPER - GET POSTGRESQL BIN DIRECTORY
+# =========================================================
+
+function Get-PostgresBinFromService {
+
+    param(
+        [Parameter(Mandatory=$true)]
+        $Service
+    )
+
+    $pathName = $Service.PathName
+
+    if (!$pathName) {
+        return $null
+    }
+
+    # Find pg_ctl.exe location
+    if ($pathName -match '"([^"]*\\bin\\pg_ctl\.exe)"') {
+
+        $pgCtl = $matches[1]
+
+        return Split-Path $pgCtl -Parent
+    }
+
+    if ($pathName -match '([A-Za-z]:\\[^"]*\\bin)\\pg_ctl\.exe') {
+
+        return $matches[1]
+    }
+
+    return $null
+}
+
+# =========================================================
+# HELPER - FIND INSTANCE USING PORT 5432
+# =========================================================
+
+function Get-PostgresInstanceOnPort {
+
+    param(
+        [int]$Port
+    )
+
+    Write-Host "Checking which process is using TCP port $Port..."
+
+    $connection = Get-NetTCPConnection `
+        -LocalPort $Port `
+        -State Listen `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+
+    if (!$connection) {
+
+        return $null
+    }
+
+    $processId = $connection.OwningProcess
+
+    Write-Host "Port $Port is owned by PID: $processId"
+
+    $service = Get-CimInstance Win32_Service |
+        Where-Object {
+            $_.ProcessId -eq $processId -and
+            (
+                $_.Name -like "postgresql*" -or
+                $_.DisplayName -like "*PostgreSQL*"
+            )
+        } |
+        Select-Object -First 1
+
+    if (!$service) {
+
+        Write-Host "Could not map PID to PostgreSQL service."
+
+        return $null
+    }
+
+    $bin = Get-PostgresBinFromService -Service $service
+
+    $data = Get-PostgresDataDirectory -Service $service
+
+    return [PSCustomObject]@{
+        Service = $service
+        Bin = $bin
+        Data = $data
+        PID = $processId
+    }
+}
+
+# =========================================================
+# HELPER - FIND POSTGRESQL INSTALLATION
+# =========================================================
+
+function Find-AnyPostgresBin {
 
     $possiblePaths = @(
         "C:\Program Files\PostgreSQL\18\bin",
@@ -102,83 +260,42 @@ function Find-PostgresBin {
 
     if ($psql) {
 
-        return Split-Path $psql.Source
+        return Split-Path $psql.Source -Parent
     }
 
     return $null
 }
 
-
 # =========================================================
-# HELPER FUNCTION - CONVERT SECURE STRING
+# HELPER - RUN PSQL
 # =========================================================
 
-function Convert-SecureStringToPlainText {
+function Invoke-PSQL {
 
     param(
-        [System.Security.SecureString]$SecureString
+        [Parameter(Mandatory=$true)]
+        [string]$PsqlPath,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Database,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Sql
     )
 
-    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR(
-        $SecureString
-    )
+    & $PsqlPath `
+        -U $databaseUser `
+        -h $databaseHost `
+        -p $databasePort `
+        -d $Database `
+        -v "ON_ERROR_STOP=1" `
+        -c $Sql
 
-    try {
-
-        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-
-    }
-    finally {
-
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-    }
+    return $LASTEXITCODE
 }
 
-
 # =========================================================
-# HELPER FUNCTION - TEST POSTGRESQL PASSWORD
-# =========================================================
-
-function Test-PostgresPassword {
-
-    param(
-        [string]$Password,
-        [string]$PsqlPath
-    )
-
-    $oldPassword = $env:PGPASSWORD
-
-    try {
-
-        $env:PGPASSWORD = $Password
-
-        & $PsqlPath `
-            -U $databaseUser `
-            -h $databaseHost `
-            -p $databasePort `
-            -d "postgres" `
-            -tAc "SELECT 1;" `
-            2>$null | Out-Null
-
-        return ($LASTEXITCODE -eq 0)
-    }
-    finally {
-
-        if ($null -eq $oldPassword) {
-
-            Remove-Item Env:PGPASSWORD `
-                -ErrorAction SilentlyContinue
-        }
-        else {
-
-            $env:PGPASSWORD = $oldPassword
-        }
-    }
-}
-
-
-# =========================================================
-# STEP 1 - CHECK GIT
+# STEP 1 - GIT
 # =========================================================
 
 Write-Host "[1] Checking Git..."
@@ -186,20 +303,17 @@ Write-Host ""
 
 if (Get-Command git -ErrorAction SilentlyContinue) {
 
-    $gitVersion = git --version
-
     Write-Host "Git is already installed:"
-    Write-Host $gitVersion
+    git --version
 }
 else {
 
-    Write-Host "Git is NOT installed."
+    Write-Host "Git is not installed."
     Write-Host "Installing Git..."
-    Write-Host ""
 
     if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
 
-        throw "Git is not installed and winget is not available. Please install Git manually."
+        throw "Git is not installed and winget is unavailable."
     }
 
     winget install `
@@ -215,12 +329,9 @@ else {
     }
 
     Refresh-Path
-
-    Write-Host "Git installation completed."
 }
 
 Write-Host ""
-
 
 # =========================================================
 # STEP 2 - CREATE BASE FOLDER
@@ -234,7 +345,8 @@ if (!(Test-Path $baseFolder)) {
     New-Item `
         -ItemType Directory `
         -Path $baseFolder `
-        -Force | Out-Null
+        -Force |
+        Out-Null
 
     Write-Host "Created:"
     Write-Host $baseFolder
@@ -246,7 +358,6 @@ else {
 }
 
 Write-Host ""
-
 
 # =========================================================
 # STEP 3 - CLONE REPOSITORY
@@ -277,7 +388,6 @@ else {
 
 Write-Host ""
 
-
 # =========================================================
 # STEP 4 - VERIFY REPOSITORY
 # =========================================================
@@ -287,7 +397,7 @@ Write-Host ""
 
 if (!(Test-Path $repoFolder)) {
 
-    throw "ERROR: NewZambia repository folder was not created."
+    throw "Repository folder was not found."
 }
 
 Write-Host "Repository found:"
@@ -295,36 +405,31 @@ Write-Host $repoFolder
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 5 - CHECK NODE.JS
+# STEP 5 - NODE.JS
 # =========================================================
 
 Write-Host "[5] Checking Node.js..."
 Write-Host ""
 
-$nodeExists = Get-Command node -ErrorAction SilentlyContinue
+$node = Get-Command node -ErrorAction SilentlyContinue
 
-if ($nodeExists) {
+if ($node) {
 
     $currentNodeVersion = node --version
 
-    Write-Host "Installed Node.js version:"
+    Write-Host "Installed Node.js:"
     Write-Host $currentNodeVersion
 
-    Write-Host "Required Node.js version:"
+    Write-Host "Required Node.js:"
     Write-Host $requiredNodeVersion
 
-    if ($currentNodeVersion -eq $requiredNodeVersion) {
-
-        Write-Host "Correct Node.js version is already installed."
-    }
-    else {
+    if ($currentNodeVersion -ne $requiredNodeVersion) {
 
         Write-Host ""
         Write-Host "WARNING:"
         Write-Host "Installed Node.js version differs from required version."
-        Write-Host "The script will continue using installed Node.js."
+        Write-Host "The script will continue using the installed version."
     }
 }
 else {
@@ -334,23 +439,23 @@ else {
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 6 - INSTALL NODE.JS IF MISSING
+# STEP 6 - INSTALL NODE IF MISSING
 # =========================================================
 
-if (!$nodeExists) {
+if (!$node) {
 
     Write-Host "[6] Installing Node.js..."
     Write-Host ""
 
     if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
 
-        throw "winget is not available. Please install Node.js manually."
+        throw "winget is unavailable. Install Node.js manually."
     }
 
     winget install `
         --id OpenJS.NodeJS `
+        --source winget `
         --accept-source-agreements `
         --accept-package-agreements
 
@@ -370,9 +475,8 @@ else {
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 7 - INSTALL VISUAL STUDIO CODE
+# STEP 7 - VS CODE
 # =========================================================
 
 Write-Host "[7] Checking Visual Studio Code..."
@@ -384,9 +488,7 @@ if (Get-Command code -ErrorAction SilentlyContinue) {
 }
 else {
 
-    Write-Host "Visual Studio Code is not installed."
-    Write-Host "Installing Visual Studio Code..."
-    Write-Host ""
+    Write-Host "VS Code is not installed."
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
 
@@ -399,51 +501,55 @@ else {
 
         if ($LASTEXITCODE -eq 0) {
 
-            Write-Host "Visual Studio Code installation completed."
+            Write-Host "VS Code installed successfully."
         }
         else {
 
-            Write-Host "VS Code installation exited with code $LASTEXITCODE."
+            Write-Host "WARNING: VS Code installation failed."
         }
     }
     else {
 
-        Write-Host "winget is not available."
-        Write-Host "Please install Visual Studio Code manually."
+        Write-Host "WARNING: winget unavailable."
     }
 }
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 8 - CHECK / INSTALL POSTGRESQL
+# STEP 8 - POSTGRESQL
 # =========================================================
 
 Write-Host "[8] Checking PostgreSQL..."
 Write-Host ""
 
-$postgresBin = Find-PostgresBin
+$postgresServices = Get-PostgresServices
 
-if ($postgresBin) {
+$postgresBin = Find-AnyPostgresBin
 
-    Write-Host "PostgreSQL is already installed."
-    Write-Host "PostgreSQL bin:"
-    Write-Host $postgresBin
+if ($postgresServices.Count -gt 0) {
 
-    $postgresWasAlreadyInstalled = $true
+    Write-Host "PostgreSQL services found:"
+
+    foreach ($service in $postgresServices) {
+
+        Write-Host " - $($service.Name)"
+    }
 }
 else {
 
-    $postgresWasAlreadyInstalled = $false
+    Write-Host "No PostgreSQL Windows service found."
+}
 
-    Write-Host "PostgreSQL is NOT installed."
-    Write-Host "Installing PostgreSQL..."
+if (!$postgresBin) {
+
     Write-Host ""
+    Write-Host "PostgreSQL is not installed."
+    Write-Host "Installing PostgreSQL..."
 
     if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
 
-        throw "PostgreSQL is not installed and winget is not available."
+        throw "PostgreSQL is not installed and winget is unavailable."
     }
 
     winget install `
@@ -461,251 +567,356 @@ else {
 
     Start-Sleep -Seconds 8
 
-    $postgresBin = Find-PostgresBin
+    $postgresServices = Get-PostgresServices
+
+    $postgresBin = Find-AnyPostgresBin
 
     if (!$postgresBin) {
 
-        throw "PostgreSQL was installed, but psql.exe could not be located."
+        throw "PostgreSQL installed but psql.exe could not be found."
     }
-
-    Write-Host "PostgreSQL installation completed."
 }
 
 Write-Host ""
-
+Write-Host "PostgreSQL installation detected."
 
 # =========================================================
-# STEP 9 - START POSTGRESQL SERVICE
+# STEP 9 - DETECT POSTGRESQL INSTANCE ON 5432
 # =========================================================
 
-Write-Host "[9] Starting PostgreSQL service..."
+Write-Host ""
+Write-Host "[9] Detecting PostgreSQL instance using port 5432..."
 Write-Host ""
 
-$postgresServices = Get-Service | Where-Object {
+$pgInstance = Get-PostgresInstanceOnPort -Port 5432
 
-    $_.Name -like "postgresql*" -or
-    $_.DisplayName -like "*PostgreSQL*"
-}
+if ($pgInstance) {
 
-if ($postgresServices) {
-
-    foreach ($service in $postgresServices) {
-
-        Write-Host "Found PostgreSQL service:"
-        Write-Host $service.Name
-
-        if ($service.Status -ne "Running") {
-
-            Write-Host "Starting PostgreSQL service..."
-
-            Start-Service $service.Name
-
-            Start-Sleep -Seconds 5
-        }
-
-        Write-Host "Service status:"
-        Write-Host (Get-Service $service.Name).Status
-    }
+    Write-Host ""
+    Write-Host "PostgreSQL instance found."
+    Write-Host "Service : $($pgInstance.Service.Name)"
+    Write-Host "PID     : $($pgInstance.PID)"
+    Write-Host "Bin     : $($pgInstance.Bin)"
+    Write-Host "Data    : $($pgInstance.Data)"
 }
 else {
 
-    Write-Host "WARNING: PostgreSQL Windows service was not found."
+    Write-Host ""
+    Write-Host "No PostgreSQL server is currently listening on port 5432."
+    Write-Host ""
+
+    if ($postgresServices.Count -eq 0) {
+
+        throw "No PostgreSQL service is available."
+    }
+
+    Write-Host "Attempting to find a PostgreSQL service configured for port 5432..."
+
+    foreach ($service in $postgresServices) {
+
+        $dataDir = Get-PostgresDataDirectory -Service $service
+
+        if (!$dataDir) {
+            continue
+        }
+
+        $configFile = Join-Path $dataDir "postgresql.conf"
+
+        if (!(Test-Path $configFile)) {
+            continue
+        }
+
+        $config = Get-Content $configFile -Raw
+
+        if (
+            $config -match '(?m)^\s*port\s*=\s*5432'
+        ) {
+
+            Write-Host "Found service configured for port 5432:"
+            Write-Host $service.Name
+
+            if ($service.State -ne "Running") {
+
+                Write-Host "Starting service..."
+
+                Start-Service $service.Name
+
+                Start-Sleep -Seconds 5
+            }
+
+            break
+        }
+    }
+
+    Start-Sleep -Seconds 3
+
+    $pgInstance = Get-PostgresInstanceOnPort -Port 5432
 }
 
-Write-Host ""
+if (!$pgInstance) {
 
+    throw @"
+Could not find a PostgreSQL instance listening on port 5432.
+
+Please check:
+
+Get-Service postgresql*
+Get-NetTCPConnection -LocalPort 5432 -State Listen
+"@
+}
 
 # =========================================================
-# STEP 10 - LOCATE PSQL
+# ENSURE SERVICE IS RUNNING
 # =========================================================
 
-Write-Host "[10] Locating PostgreSQL psql..."
-Write-Host ""
+$pgService = Get-Service $pgInstance.Service.Name
 
-$postgresBin = Find-PostgresBin
+if ($pgService.Status -ne "Running") {
+
+    Write-Host ""
+    Write-Host "Starting PostgreSQL service:"
+    Write-Host $pgService.Name
+
+    Start-Service $pgService.Name
+
+    Start-Sleep -Seconds 5
+}
+
+# =========================================================
+# UPDATE INSTANCE INFORMATION
+# =========================================================
+
+$pgInstance = Get-PostgresInstanceOnPort -Port 5432
+
+if (!$pgInstance) {
+
+    throw "PostgreSQL is not listening on port 5432 after service startup."
+}
+
+$postgresBin = $pgInstance.Bin
 
 if (!$postgresBin) {
 
-    throw "Unable to locate PostgreSQL psql.exe."
+    throw "Could not determine PostgreSQL bin directory."
 }
 
 $psqlPath = Join-Path $postgresBin "psql.exe"
 
 if (!(Test-Path $psqlPath)) {
 
-    throw "psql.exe not found at: $psqlPath"
+    throw "psql.exe not found at $psqlPath"
 }
 
-Write-Host "psql found:"
-Write-Host $psqlPath
+$dataDirectory = $pgInstance.Data
+
+if (!$dataDirectory) {
+
+    throw "Could not determine PostgreSQL data directory."
+}
+
+$pgHbaFile = Join-Path $dataDirectory "pg_hba.conf"
+
+if (!(Test-Path $pgHbaFile)) {
+
+    throw "pg_hba.conf not found at $pgHbaFile"
+}
 
 Write-Host ""
-
+Write-Host "Using PostgreSQL:"
+Write-Host "Service : $($pgInstance.Service.Name)"
+Write-Host "Version : $postgresBin"
+Write-Host "Data    : $dataDirectory"
+Write-Host ""
 
 # =========================================================
-# STEP 11 - CONFIGURE POSTGRESQL PASSWORD
+# STEP 10 - RESET POSTGRES PASSWORD
 # =========================================================
 
-Write-Host "[11] Configuring PostgreSQL password..."
+Write-Host "[10] Resetting PostgreSQL postgres password..."
 Write-Host ""
 
-Write-Host "The final PostgreSQL password will be:"
-Write-Host "password@123"
+Write-Host "Current password is NOT required."
+Write-Host ""
+Write-Host "The script will temporarily allow local PostgreSQL"
+Write-Host "authentication, set the new password, and immediately"
+Write-Host "restore the original pg_hba.conf."
 Write-Host ""
 
-Write-Host "IMPORTANT:"
-Write-Host "This is the PostgreSQL database password."
-Write-Host "It is NOT the pgAdmin master password."
-Write-Host ""
-
 # ---------------------------------------------------------
-# Try common/default possibility for a NEW installation
+# Backup pg_hba.conf
 # ---------------------------------------------------------
 
-$passwordConfigured = $false
+$backupName = "pg_hba.conf.school_erp_backup_{0}.bak" -f `
+    (Get-Date -Format "yyyyMMdd_HHmmss")
 
-if (!$postgresWasAlreadyInstalled) {
+$backupFile = Join-Path $dataDirectory $backupName
 
-    Write-Host "PostgreSQL was just installed."
+Copy-Item `
+    -Path $pgHbaFile `
+    -Destination $backupFile `
+    -Force
+
+Write-Host "Backup created:"
+Write-Host $backupFile
+
+$temporaryAccessAdded = $false
+
+try {
+
+    # -----------------------------------------------------
+    # Read original pg_hba.conf
+    # -----------------------------------------------------
+
+    $originalHba = Get-Content `
+        -Path $pgHbaFile `
+        -Raw
+
+    # -----------------------------------------------------
+    # Temporary local trust rules
+    # These are placed at the TOP so they take precedence.
+    # -----------------------------------------------------
+
+    $temporaryRules = @"
+# SCHOOL ERP TEMPORARY PASSWORD RESET
+# This section is automatically removed by the installer.
+host    all    postgres    127.0.0.1/32    trust
+host    all    postgres    ::1/128         trust
+
+"@
+
+    $newHba = $temporaryRules + $originalHba
+
+    Set-Content `
+        -Path $pgHbaFile `
+        -Value $newHba `
+        -Encoding UTF8
+
+    $temporaryAccessAdded = $true
+
     Write-Host ""
+    Write-Host "Temporary local authentication enabled."
 
-    Write-Host "The PostgreSQL installer may have asked you to create"
-    Write-Host "a password for the postgres user."
-    Write-Host ""
+    # -----------------------------------------------------
+    # Restart PostgreSQL
+    # -----------------------------------------------------
 
-    $currentPasswordSecure = Read-Host `
-        "Enter the PostgreSQL password you created during installation" `
-        -AsSecureString
+    Write-Host "Restarting PostgreSQL..."
 
-    $currentPassword = Convert-SecureStringToPlainText `
-        $currentPasswordSecure
+    Restart-Service `
+        -Name $pgInstance.Service.Name `
+        -Force
 
-    Write-Host ""
-    Write-Host "Testing PostgreSQL password..."
+    Start-Sleep -Seconds 5
 
-    if (Test-PostgresPassword `
-        -Password $currentPassword `
-        -PsqlPath $psqlPath) {
+    # -----------------------------------------------------
+    # Verify server is back
+    # -----------------------------------------------------
 
-        Write-Host "Current password is correct."
+    $serviceAfterRestart = Get-Service $pgInstance.Service.Name
 
-        $passwordConfigured = $true
+    if ($serviceAfterRestart.Status -ne "Running") {
+
+        throw "PostgreSQL service failed to restart."
     }
-    else {
 
-        Write-Host ""
-        Write-Host "The supplied password could not authenticate."
-        Write-Host ""
-    }
-}
-else {
-
-    Write-Host "PostgreSQL already exists on this computer."
-    Write-Host ""
-
-    $currentPasswordSecure = Read-Host `
-        "Enter CURRENT PostgreSQL password for user 'postgres'" `
-        -AsSecureString
-
-    $currentPassword = Convert-SecureStringToPlainText `
-        $currentPasswordSecure
+    # -----------------------------------------------------
+    # Set password
+    # -----------------------------------------------------
 
     Write-Host ""
-    Write-Host "Testing current PostgreSQL password..."
+    Write-Host "Setting PostgreSQL password..."
 
-    if (Test-PostgresPassword `
-        -Password $currentPassword `
-        -PsqlPath $psqlPath) {
-
-        Write-Host "Current password is correct."
-
-        $passwordConfigured = $true
-    }
-    else {
-
-        Write-Host ""
-        Write-Host "ERROR: Current PostgreSQL password is incorrect."
-        Write-Host ""
-        Write-Host "The script cannot change a PostgreSQL password"
-        Write-Host "without first authenticating as the postgres user."
-        Write-Host ""
-
-        throw "Invalid PostgreSQL password."
-    }
-}
-
-
-# ---------------------------------------------------------
-# Change password
-# ---------------------------------------------------------
-
-if ($passwordConfigured) {
-
-    Write-Host ""
-    Write-Host "Changing PostgreSQL password..."
-    Write-Host ""
-
-    $env:PGPASSWORD = $currentPassword
+    Remove-Item `
+        Env:PGPASSWORD `
+        -ErrorAction SilentlyContinue
 
     & $psqlPath `
         -U $databaseUser `
         -h $databaseHost `
         -p $databasePort `
         -d "postgres" `
+        -v "ON_ERROR_STOP=1" `
         -c "ALTER USER postgres WITH PASSWORD 'password@123';"
 
     if ($LASTEXITCODE -ne 0) {
 
-        Remove-Item Env:PGPASSWORD `
-            -ErrorAction SilentlyContinue
-
-        throw "Unable to change PostgreSQL password."
+        throw "Could not set PostgreSQL password."
     }
 
     Write-Host ""
-    Write-Host "============================================="
-    Write-Host " PostgreSQL password changed successfully"
-    Write-Host "============================================="
-    Write-Host ""
+    Write-Host "[OK] PostgreSQL password changed successfully."
 
-    Write-Host "New password:"
-    Write-Host "password@123"
+}
+finally {
 
-    Write-Host ""
+    # -----------------------------------------------------
+    # ALWAYS restore pg_hba.conf
+    # -----------------------------------------------------
 
-    Remove-Item Env:PGPASSWORD `
-        -ErrorAction SilentlyContinue
+    if ($temporaryAccessAdded) {
+
+        Write-Host ""
+        Write-Host "Restoring original pg_hba.conf..."
+
+        Copy-Item `
+            -Path $backupFile `
+            -Destination $pgHbaFile `
+            -Force
+
+        Write-Host "Original pg_hba.conf restored."
+
+        Write-Host "Restarting PostgreSQL to apply authentication settings..."
+
+        Restart-Service `
+            -Name $pgInstance.Service.Name `
+            -Force
+
+        Start-Sleep -Seconds 5
+
+        Remove-Item `
+            Env:PGPASSWORD `
+            -ErrorAction SilentlyContinue
+    }
 }
 
-# Clear old password variable
-$currentPassword = $null
-
+Write-Host ""
+Write-Host "PostgreSQL password is now:"
+Write-Host "password@123"
 Write-Host ""
 
-
 # =========================================================
-# STEP 12 - TEST NEW PASSWORD
+# STEP 11 - VERIFY NEW PASSWORD
 # =========================================================
 
-Write-Host "[12] Testing new PostgreSQL password..."
+Write-Host "[11] Verifying PostgreSQL password..."
 Write-Host ""
 
-if (!(Test-PostgresPassword `
-    -Password $databasePassword `
-    -PsqlPath $psqlPath)) {
+$env:PGPASSWORD = $databasePassword
 
-    throw "New PostgreSQL password test FAILED."
+& $psqlPath `
+    -U $databaseUser `
+    -h $databaseHost `
+    -p $databasePort `
+    -d "postgres" `
+    -v "ON_ERROR_STOP=1" `
+    -c "SELECT current_user, version();"
+
+if ($LASTEXITCODE -ne 0) {
+
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+
+    throw "New PostgreSQL password verification failed."
 }
 
-Write-Host "New PostgreSQL password works successfully."
 Write-Host ""
-
+Write-Host "[OK] PostgreSQL password verified."
 
 # =========================================================
-# STEP 13 - CREATE DATABASE
+# STEP 12 - CREATE DATABASE
 # =========================================================
 
-Write-Host "[13] Checking school_erp database..."
+Write-Host ""
+Write-Host "[12] Checking school_erp database..."
 Write-Host ""
 
 $env:PGPASSWORD = $databasePassword
@@ -715,24 +926,23 @@ $dbExists = & $psqlPath `
     -h $databaseHost `
     -p $databasePort `
     -d "postgres" `
-    -tAc "SELECT 1 FROM pg_database WHERE datname = '$databaseName';"
+    -tAc "SELECT 1 FROM pg_database WHERE datname = 'school_erp';"
 
 if ($LASTEXITCODE -ne 0) {
 
-    Remove-Item Env:PGPASSWORD `
-        -ErrorAction SilentlyContinue
+    Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
     throw "Could not check PostgreSQL databases."
 }
 
 if ($dbExists.Trim() -eq "1") {
 
-    Write-Host "Database '$databaseName' already exists."
-    Write-Host "Skipping database creation."
+    Write-Host "Database already exists:"
+    Write-Host $databaseName
 }
 else {
 
-    Write-Host "Database '$databaseName' does not exist."
+    Write-Host "Database does not exist."
     Write-Host "Creating database..."
 
     & $psqlPath `
@@ -740,30 +950,28 @@ else {
         -h $databaseHost `
         -p $databasePort `
         -d "postgres" `
+        -v "ON_ERROR_STOP=1" `
         -c "CREATE DATABASE school_erp;"
 
     if ($LASTEXITCODE -ne 0) {
 
-        Remove-Item Env:PGPASSWORD `
-            -ErrorAction SilentlyContinue
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
         throw "Database creation failed."
     }
 
-    Write-Host "Database '$databaseName' created successfully."
+    Write-Host "[OK] Database created."
 }
 
-Remove-Item Env:PGPASSWORD `
-    -ErrorAction SilentlyContinue
+Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 14 - CHECK / INSTALL PGADMIN 4
+# STEP 13 - PGADMIN 4
 # =========================================================
 
-Write-Host "[14] Checking pgAdmin..."
+Write-Host "[13] Checking pgAdmin 4..."
 Write-Host ""
 
 $pgAdminInstalled = $false
@@ -772,11 +980,13 @@ if (Get-Command pgadmin4 -ErrorAction SilentlyContinue) {
 
     $pgAdminInstalled = $true
 }
-elseif (Test-Path "C:\Program Files\pgAdmin 4") {
+
+if (Test-Path "C:\Program Files\pgAdmin 4") {
 
     $pgAdminInstalled = $true
 }
-elseif (Test-Path "C:\Program Files (x86)\pgAdmin 4") {
+
+if (Test-Path "C:\Program Files (x86)\pgAdmin 4") {
 
     $pgAdminInstalled = $true
 }
@@ -788,10 +998,10 @@ if ($pgAdminInstalled) {
 else {
 
     Write-Host "pgAdmin 4 is not installed."
-    Write-Host "Installing pgAdmin 4..."
-    Write-Host ""
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
+
+        Write-Host "Installing pgAdmin 4..."
 
         winget install `
             --id pgAdmin.pgAdmin4 `
@@ -802,28 +1012,27 @@ else {
 
         if ($LASTEXITCODE -eq 0) {
 
-            Write-Host "pgAdmin 4 installation completed."
+            Write-Host "[OK] pgAdmin 4 installed."
         }
         else {
 
-            Write-Host "pgAdmin installation exited with code $LASTEXITCODE."
+            Write-Host "WARNING: pgAdmin installation failed."
+            Write-Host "You can install pgAdmin manually."
         }
     }
     else {
 
-        Write-Host "winget is not available."
-        Write-Host "Please install pgAdmin 4 manually."
+        Write-Host "WARNING: winget unavailable."
     }
 }
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 15 - VERIFY PROJECT FOLDERS
+# STEP 14 - VERIFY PROJECT FOLDERS
 # =========================================================
 
-Write-Host "[15] Verifying project folders..."
+Write-Host "[14] Verifying project folders..."
 Write-Host ""
 
 if (!(Test-Path $frontendFolder)) {
@@ -836,31 +1045,27 @@ if (!(Test-Path $backendFolder)) {
     throw "Backend folder not found: $backendFolder"
 }
 
-Write-Host "Frontend:"
+Write-Host "[OK] Frontend:"
 Write-Host $frontendFolder
 
 Write-Host ""
 
-Write-Host "Backend:"
+Write-Host "[OK] Backend:"
 Write-Host $backendFolder
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 16 - CREATE BACKEND .ENV
+# STEP 15 - CREATE BACKEND .ENV
 # =========================================================
 
-Write-Host "[16] Creating backend .env file..."
+Write-Host "[15] Creating backend .env..."
 Write-Host ""
 
-$envFile = "$backendFolder\.env"
+$envFile = Join-Path $backendFolder ".env"
 
-# password@123
-#      ↓
-# password%40123
-
-$databaseUrl = "postgresql://$databaseUser`:$databasePasswordEncoded@$databaseHost`:$databasePort/$databaseName"
+$databaseUrl = `
+    "postgresql://$databaseUser`:$databasePasswordEncoded@$databaseHost`:$databasePort/$databaseName"
 
 $envContent = @"
 DATABASE_URL="$databaseUrl"
@@ -877,28 +1082,26 @@ Set-Content `
 
 if (!(Test-Path $envFile)) {
 
-    throw "Failed to create backend .env file."
+    throw "Could not create backend .env."
 }
 
-Write-Host "Backend .env created:"
+Write-Host "[OK] .env created:"
 Write-Host $envFile
 
 Write-Host ""
-
 Write-Host "DATABASE_URL:"
-Write-Host "postgresql://postgres:password%40123@localhost:5432/school_erp"
+Write-Host 'postgresql://postgres:password%40123@localhost:5432/school_erp'
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 17 - PROTECT .ENV
+# STEP 16 - PROTECT .ENV
 # =========================================================
 
-Write-Host "[17] Protecting .env from Git..."
+Write-Host "[16] Protecting .env from Git..."
 Write-Host ""
 
-$gitignoreFile = "$backendFolder\.gitignore"
+$gitignoreFile = Join-Path $backendFolder ".gitignore"
 
 if (Test-Path $gitignoreFile) {
 
@@ -917,7 +1120,7 @@ if ($gitignoreContent -notmatch "(?m)^\.env$") {
         -Path $gitignoreFile `
         -Value "`r`n# Environment variables`r`n.env`r`n"
 
-    Write-Host ".env added to backend .gitignore."
+    Write-Host "[OK] .env added to backend .gitignore."
 }
 else {
 
@@ -926,12 +1129,11 @@ else {
 
 Write-Host ""
 
-
 # =========================================================
-# STEP 18 - INSTALL FRONTEND DEPENDENCIES
+# STEP 17 - FRONTEND NPM INSTALL
 # =========================================================
 
-Write-Host "[18] Installing FRONTEND dependencies..."
+Write-Host "[17] Installing frontend dependencies..."
 Write-Host ""
 
 Set-Location $frontendFolder
@@ -940,19 +1142,18 @@ npm install
 
 if ($LASTEXITCODE -ne 0) {
 
-    throw "Frontend npm install FAILED."
+    throw "Frontend npm install failed."
 }
 
 Write-Host ""
-Write-Host "Frontend npm install completed successfully."
+Write-Host "[OK] Frontend dependencies installed."
+
+# =========================================================
+# STEP 18 - BACKEND NPM INSTALL
+# =========================================================
+
 Write-Host ""
-
-
-# =========================================================
-# STEP 19 - INSTALL BACKEND DEPENDENCIES
-# =========================================================
-
-Write-Host "[19] Installing BACKEND dependencies..."
+Write-Host "[18] Installing backend dependencies..."
 Write-Host ""
 
 Set-Location $backendFolder
@@ -961,25 +1162,23 @@ npm install
 
 if ($LASTEXITCODE -ne 0) {
 
-    throw "Backend npm install FAILED."
+    throw "Backend npm install failed."
 }
 
 Write-Host ""
-Write-Host "Backend npm install completed successfully."
+Write-Host "[OK] Backend dependencies installed."
+
+# =========================================================
+# STEP 19 - PRISMA GENERATE
+# =========================================================
+
 Write-Host ""
-
-
-# =========================================================
-# STEP 20 - GENERATE PRISMA CLIENT
-# =========================================================
-
-Write-Host "[20] Generating Prisma Client..."
+Write-Host "[19] Generating Prisma Client..."
 Write-Host ""
 
 Set-Location $backendFolder
 
-$previousTlsSetting = `
-    $env:NODE_TLS_REJECT_UNAUTHORIZED
+$previousTlsSetting = $env:NODE_TLS_REJECT_UNAUTHORIZED
 
 $env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
 
@@ -1002,33 +1201,33 @@ try {
 
     if ($LASTEXITCODE -ne 0) {
 
-        throw "Prisma Client generation FAILED."
+        throw "Prisma Client generation failed."
     }
+
 }
 finally {
 
     if ($null -eq $previousTlsSetting) {
 
-        Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED `
+        Remove-Item `
+            Env:NODE_TLS_REJECT_UNAUTHORIZED `
             -ErrorAction SilentlyContinue
     }
     else {
 
-        $env:NODE_TLS_REJECT_UNAUTHORIZED = `
-            $previousTlsSetting
+        $env:NODE_TLS_REJECT_UNAUTHORIZED = $previousTlsSetting
     }
 }
 
 Write-Host ""
-Write-Host "Prisma Client generated successfully."
+Write-Host "[OK] Prisma Client generated."
+
+# =========================================================
+# STEP 20 - PRISMA DB PUSH
+# =========================================================
+
 Write-Host ""
-
-
-# =========================================================
-# STEP 21 - PRISMA DATABASE SYNC
-# =========================================================
-
-Write-Host "[21] Synchronizing Prisma database..."
+Write-Host "[20] Synchronizing Prisma database..."
 Write-Host ""
 
 Set-Location $backendFolder
@@ -1037,7 +1236,6 @@ if (Test-Path "$backendFolder\prisma\schema.prisma") {
 
     Write-Host "Prisma schema found."
     Write-Host "Running prisma db push..."
-    Write-Host ""
 
     npx prisma db push
 
@@ -1046,15 +1244,13 @@ if (Test-Path "$backendFolder\prisma\schema.prisma") {
         Write-Host ""
         Write-Host "WARNING:"
         Write-Host "Prisma db push failed."
-        Write-Host ""
-        Write-Host "The PostgreSQL configuration itself is correct."
-        Write-Host "Check the Prisma schema or project dependencies."
+        Write-Host "PostgreSQL and .env are still configured."
         Write-Host ""
     }
     else {
 
         Write-Host ""
-        Write-Host "Prisma database synchronization completed."
+        Write-Host "[OK] Prisma database synchronized."
     }
 }
 else {
@@ -1063,19 +1259,17 @@ else {
     Write-Host "Skipping Prisma database synchronization."
 }
 
+# =========================================================
+# STEP 21 - VERIFY .ENV
+# =========================================================
+
 Write-Host ""
-
-
-# =========================================================
-# STEP 22 - VERIFY .ENV
-# =========================================================
-
-Write-Host "[22] Verifying .env..."
+Write-Host "[21] Verifying .env..."
 Write-Host ""
 
 if (!(Test-Path $envFile)) {
 
-    throw ".env verification FAILED."
+    throw ".env verification failed."
 }
 
 $envCheck = Get-Content `
@@ -1127,14 +1321,12 @@ else {
     throw "FRONTEND_URL missing."
 }
 
+# =========================================================
+# STEP 22 - FINAL DATABASE TEST
+# =========================================================
+
 Write-Host ""
-
-
-# =========================================================
-# STEP 23 - FINAL DATABASE CONNECTION TEST
-# =========================================================
-
-Write-Host "[23] Testing final PostgreSQL connection..."
+Write-Host "[22] Testing final PostgreSQL connection..."
 Write-Host ""
 
 $env:PGPASSWORD = $databasePassword
@@ -1144,29 +1336,28 @@ $env:PGPASSWORD = $databasePassword
     -h $databaseHost `
     -p $databasePort `
     -d $databaseName `
+    -v "ON_ERROR_STOP=1" `
     -c "SELECT current_database(), current_user;"
 
 if ($LASTEXITCODE -ne 0) {
 
-    Remove-Item Env:PGPASSWORD `
+    Remove-Item `
+        Env:PGPASSWORD `
         -ErrorAction SilentlyContinue
 
     throw "Final PostgreSQL connection test FAILED."
 }
 
-Remove-Item Env:PGPASSWORD `
+Remove-Item `
+    Env:PGPASSWORD `
     -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "PostgreSQL connection test PASSED."
-Write-Host ""
-
+Write-Host "[OK] PostgreSQL connection test PASSED."
 
 # =========================================================
-# COMPLETE
+# FINAL INFORMATION
 # =========================================================
-
-Set-Location $repoFolder
 
 Write-Host ""
 Write-Host "============================================="
@@ -1174,7 +1365,7 @@ Write-Host "       SETUP COMPLETED SUCCESSFULLY"
 Write-Host "============================================="
 Write-Host ""
 
-Write-Host "Project location:"
+Write-Host "Project:"
 Write-Host $repoFolder
 
 Write-Host ""
@@ -1208,7 +1399,7 @@ Write-Host "Database   : school_erp"
 Write-Host ""
 
 Write-Host "DATABASE_URL:"
-Write-Host "postgresql://postgres:password%40123@localhost:5432/school_erp"
+Write-Host 'postgresql://postgres:password%40123@localhost:5432/school_erp'
 
 Write-Host ""
 
@@ -1217,18 +1408,17 @@ Write-Host " COMPONENT STATUS"
 Write-Host "============================================="
 Write-Host ""
 
-Write-Host "Git                    : Installed / Available"
-Write-Host "Node.js                : Installed / Available"
-Write-Host "VS Code                : Installed / Available"
-Write-Host "PostgreSQL             : Installed / Available"
-Write-Host "PostgreSQL Password    : password@123"
-Write-Host "Database school_erp    : Created / Available"
-Write-Host "pgAdmin                : Installed / Available"
-Write-Host "Frontend Dependencies  : Installed"
-Write-Host "Backend Dependencies   : Installed"
-Write-Host "Prisma Client          : Generated"
-Write-Host "Prisma Database        : Synchronized"
-Write-Host ".env                   : Created"
+Write-Host "Git:                 Available"
+Write-Host "Node.js:             Available"
+Write-Host "VS Code:             Available / Installed"
+Write-Host "PostgreSQL:          Configured"
+Write-Host "pgAdmin:             Available / Installed"
+Write-Host "PostgreSQL Password: password@123"
+Write-Host "Database:            school_erp"
+Write-Host "Frontend npm:        Installed"
+Write-Host "Backend npm:         Installed"
+Write-Host "Prisma Client:       Generated"
+Write-Host ".env:                Created"
 
 Write-Host ""
 
@@ -1237,40 +1427,18 @@ Write-Host " IMPORTANT"
 Write-Host "============================================="
 Write-Host ""
 
-Write-Host "PostgreSQL username:"
-Write-Host "postgres"
-
+Write-Host "PostgreSQL username : postgres"
+Write-Host "PostgreSQL password : password@123"
+Write-Host "Database            : school_erp"
 Write-Host ""
 
-Write-Host "PostgreSQL password:"
-Write-Host "password@123"
-
+Write-Host "pgAdmin master password is DIFFERENT."
+Write-Host "The password above is the PostgreSQL database password."
 Write-Host ""
 
-Write-Host "Database:"
-Write-Host "school_erp"
-
+Write-Host "You can now start your backend and frontend."
 Write-Host ""
 
-Write-Host "Backend DATABASE_URL:"
-Write-Host 'postgresql://postgres:password%40123@localhost:5432/school_erp'
-
-Write-Host ""
-
-Write-Host "NOTE:"
-Write-Host "The @ in password@123 is encoded as %40 in DATABASE_URL."
-
-Write-Host ""
-
-Write-Host "The pgAdmin MASTER password is separate."
-Write-Host "This script changes the PostgreSQL database password,"
-Write-Host "not the pgAdmin master password."
-
-Write-Host ""
-
-Write-Host "============================================="
-Write-Host "          SETUP FINISHED"
-Write-Host "============================================="
-Write-Host ""
+Set-Location $repoFolder
 
 Read-Host "Press Enter to exit"
