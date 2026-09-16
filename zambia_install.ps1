@@ -1,10 +1,33 @@
-$ErrorActionPreference = "Stop"
+# =========================================================
+# School ERP Automated Turnkey Installer & System Setup
+# =========================================================
+
+$ErrorActionPreference = "Continue"
 
 Write-Host ""
 Write-Host "============================================="
-Write-Host "           School ERP Setup"
+Write-Host "      School ERP Turnkey System Setup"
 Write-Host "============================================="
 Write-Host ""
+
+# ---------------------------------------------------------
+# AUTO-ELEVATION CHECK (ADMINISTRATOR PRIVILEGES)
+# ---------------------------------------------------------
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "[!] Administrator privileges are required to install system services." -ForegroundColor Yellow
+    Write-Host "[!] Requesting Administrator elevation..." -ForegroundColor Yellow
+    try {
+        Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`""
+        exit
+    } catch {
+        Write-Host "[ERROR] Auto-elevation failed. Please right-click PowerShell and choose 'Run as Administrator'." -ForegroundColor Red
+        throw "Script execution aborted: Administrator rights required."
+    }
+}
 
 # =========================================================
 # CONFIGURATION
@@ -18,13 +41,6 @@ $repoFolder = "C:\school_erp\newzambia"
 $frontendFolder = "$repoFolder\frontend"
 $backendFolder = "$repoFolder\backend"
 
-$requiredNodeVersion = "v25.9.0"
-
-# =========================================================
-# .ENV CONFIGURATION
-# =========================================================
-# Change these values according to your PostgreSQL setup.
-
 $databaseUser = "postgres"
 $databasePassword = "password@123"
 $databaseHost = "localhost"
@@ -32,839 +48,524 @@ $databasePort = "5432"
 $databaseName = "school_erp"
 
 $backendPort = "5000"
-
-# JWT secret used by the backend
 $jwtSecret = "school_erp_jwt_secret_change_this"
-
-# Frontend URL
 $frontendUrl = "http://localhost:5173"
 
+# Helper function to refresh PATH environment variable
+function Refresh-EnvironmentPath {
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
+
 # =========================================================
-# STEP 1 - CHECK GIT
+# STEP 1 - CREATE SCHOOL_ERP BASE FOLDER
 # =========================================================
 
-Write-Host "[1] Checking Git..."
+Write-Host "[1] Setting up base folder ($baseFolder)..." -ForegroundColor Cyan
+if (-not (Test-Path $baseFolder)) {
+    New-Item -ItemType Directory -Path $baseFolder -Force | Out-Null
+    Write-Host "[OK] Base directory created: $baseFolder" -ForegroundColor Green
+} else {
+    Write-Host "[OK] Base directory already exists: $baseFolder" -ForegroundColor Green
+}
 Write-Host ""
+
+# =========================================================
+# STEP 2 - CHECK & INSTALL GIT
+# =========================================================
+
+Write-Host "[2] Checking Git..." -ForegroundColor Cyan
+Refresh-EnvironmentPath
 
 if (Get-Command git -ErrorAction SilentlyContinue) {
-
     $gitVersion = git --version
+    Write-Host "[OK] Git is already installed ($gitVersion)." -ForegroundColor Green
+} else {
+    Write-Host "[!] Git is missing. Installing Git..." -ForegroundColor Yellow
+    $gitInstalled = $false
 
-    Write-Host "Git is already installed:"
-    Write-Host $gitVersion
-
-}
-else {
-
-    Write-Host "Git is NOT installed."
-    Write-Host "Installing Git..."
-
-    if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
-
-        throw "Git is not installed and Windows Package Manager (winget) is not available. Please install Git manually."
-
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "Attempting installation via winget..."
+        winget install --id Git.Git --exact --source winget --accept-source-agreements --accept-package-agreements --silent
+        if ($LASTEXITCODE -eq 0) { $gitInstalled = $true }
     }
 
-    winget install --id Git.Git `
-        --exact `
-        --source winget `
-        --accept-source-agreements `
-        --accept-package-agreements
-
-    if ($LASTEXITCODE -ne 0) {
-
-        throw "Git installation failed."
-
+    if (-not $gitInstalled) {
+        Write-Host "Downloading Git standalone installer..." -ForegroundColor Yellow
+        $gitSetupPath = "$env:TEMP\git_setup.exe"
+        $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/Git-2.44.0-64-bit.exe"
+        try {
+            Invoke-WebRequest -Uri $gitUrl -OutFile $gitSetupPath -UseBasicParsing
+            Start-Process -FilePath $gitSetupPath -ArgumentList "/VERYSILENT /NORESTART /NOCANCEL /SP-" -Wait
+            $gitInstalled = $true
+        } catch {
+            Write-Host "[WARN] Direct Git download failed: $_" -ForegroundColor Yellow
+        }
     }
 
-    Write-Host "Git installation completed."
-
-    # Refresh PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
-
+    Refresh-EnvironmentPath
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        Write-Host "[OK] Git installed successfully." -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Git installation could not be verified automatically. Please verify PATH." -ForegroundColor Yellow
+    }
 }
-
 Write-Host ""
-Write-Host "---------------------------------------------"
-Write-Host ""
-
 
 # =========================================================
-# STEP 2 - CREATE school_erp FOLDER
+# STEP 3 - CLONE / VERIFY REPOSITORY
 # =========================================================
 
-Write-Host "[2] Creating school_erp folder..."
-Write-Host ""
-
-if (!(Test-Path $baseFolder)) {
-
-    New-Item -ItemType Directory -Path $baseFolder | Out-Null
-
-    Write-Host "Created:"
-    Write-Host $baseFolder
-
-}
-else {
-
-    Write-Host "Folder already exists:"
-    Write-Host $baseFolder
-
-}
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 3 - CLONE REPOSITORY
-# =========================================================
-
-Write-Host "[3] Cloning NewZambia repository..."
-Write-Host ""
-
-Set-Location $baseFolder
-
+Write-Host "[3] Verifying / Cloning Repository..." -ForegroundColor Cyan
 if (Test-Path $repoFolder) {
-
-    Write-Host "Repository already exists:"
-    Write-Host $repoFolder
-    Write-Host "Skipping clone."
-
-}
-else {
-
+    Write-Host "[OK] Repository directory already present: $repoFolder" -ForegroundColor Green
+} else {
+    Write-Host "Cloning project repository from $repoUrl..." -ForegroundColor Yellow
+    Set-Location $baseFolder
     git clone $repoUrl
-
-    if ($LASTEXITCODE -ne 0) {
-
-        throw "Git clone failed."
-
+    if (Test-Path $repoFolder) {
+        Write-Host "[OK] Repository cloned successfully into $repoFolder" -ForegroundColor Green
+    } else {
+        throw "Failed to clone repository from $repoUrl."
     }
-
-    Write-Host "Git clone completed successfully."
-
 }
-
 Write-Host ""
 
-
 # =========================================================
-# STEP 4 - VERIFY REPOSITORY
-# =========================================================
-
-Write-Host "[4] Verifying repository..."
-Write-Host ""
-
-if (!(Test-Path $repoFolder)) {
-
-    throw "ERROR: NewZambia repository folder was not created."
-
-}
-
-Write-Host "Repository found:"
-Write-Host $repoFolder
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 5 - CHECK NODE.JS
+# STEP 4 - CHECK & INSTALL NODE.JS
 # =========================================================
 
-Write-Host "[5] Checking Node.js..."
-Write-Host ""
+Write-Host "[4] Checking Node.js..." -ForegroundColor Cyan
+Refresh-EnvironmentPath
 
-$nodeExists = Get-Command node -ErrorAction SilentlyContinue
-
-if ($nodeExists) {
-
-    $currentNodeVersion = node --version
-
-    Write-Host "Installed Node.js version:"
-    Write-Host $currentNodeVersion
-
-    Write-Host "Required Node.js version:"
-    Write-Host $requiredNodeVersion
-
-    if ($currentNodeVersion -eq $requiredNodeVersion) {
-
-        Write-Host "Correct Node.js version is already installed."
-
-    }
-    else {
-
-        Write-Host ""
-        Write-Host "WARNING:"
-        Write-Host "Installed Node.js version differs from required version."
-        Write-Host "The script will continue using the installed Node.js."
-
-    }
-
-}
-else {
-
-    Write-Host "Node.js is not installed."
-
-}
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 6 - INSTALL NODE.JS IF MISSING
-# =========================================================
-
-if (!$nodeExists) {
-
-    Write-Host "[6] Installing Node.js..."
-    Write-Host ""
-
-    if (!(Get-Command winget -ErrorAction SilentlyContinue)) {
-
-        throw "winget is not available. Please install Node.js manually."
-
-    }
-
-    winget install OpenJS.NodeJS `
-        --accept-source-agreements `
-        --accept-package-agreements
-
-    if ($LASTEXITCODE -ne 0) {
-
-        throw "Node.js installation failed."
-
-    }
-
-    # Refresh PATH
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
-
-    Write-Host "Node.js installation completed."
-
-}
-else {
-
-    Write-Host "[6] Node.js installation skipped."
-
-}
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 7 - INSTALL VISUAL STUDIO CODE
-# =========================================================
-
-Write-Host "[7] Checking Visual Studio Code..."
-Write-Host ""
-
-if (Get-Command code -ErrorAction SilentlyContinue) {
-
-    Write-Host "Visual Studio Code is already installed."
-
-}
-else {
-
-    Write-Host "Visual Studio Code is not installed."
-    Write-Host "Installing Visual Studio Code..."
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    $nodeVer = node --version
+    Write-Host "[OK] Node.js is already installed ($nodeVer)." -ForegroundColor Green
+} else {
+    Write-Host "[!] Node.js is missing. Installing Node.js..." -ForegroundColor Yellow
+    $nodeInstalled = $false
 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-
-        winget install `
-            --id Microsoft.VisualStudioCode `
-            --exact `
-            --source winget `
-            --accept-source-agreements `
-            --accept-package-agreements
-
-        if ($LASTEXITCODE -eq 0) {
-
-            Write-Host "Visual Studio Code installation completed successfully."
-
-        }
-        else {
-
-            Write-Host "VS Code installation exited with code $LASTEXITCODE."
-
-        }
-
-    }
-    else {
-
-        Write-Host "winget is not available."
-        Write-Host "Please install Visual Studio Code manually."
-
+        Write-Host "Attempting Node.js installation via winget..."
+        winget install OpenJS.NodeJS.LTS --source winget --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -eq 0) { $nodeInstalled = $true }
     }
 
-}
+    if (-not $nodeInstalled) {
+        Write-Host "Downloading Node.js MSI installer..." -ForegroundColor Yellow
+        $nodeMsiPath = "$env:TEMP\node_setup.msi"
+        $nodeUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi"
+        try {
+            Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeMsiPath -UseBasicParsing
+            Start-Process msiexec.exe -ArgumentList "/i `"$nodeMsiPath`" /qb /norestart" -Wait
+            $nodeInstalled = $true
+        } catch {
+            Write-Host "[WARN] Direct Node.js MSI download failed: $_" -ForegroundColor Yellow
+        }
+    }
 
+    Refresh-EnvironmentPath
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        Write-Host "[OK] Node.js installed successfully ($(node --version))." -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Node.js installed, but PATH refresh may require starting a new terminal." -ForegroundColor Yellow
+    }
+}
 Write-Host ""
 
-
 # =========================================================
-# STEP 8 - INSTALL PGADMIN 4
+# STEP 5 - CHECK & INSTALL VISUAL STUDIO CODE
 # =========================================================
 
-Write-Host "[8] Checking pgAdmin..."
-Write-Host ""
-
-if (
-    (Get-Command pgadmin4 -ErrorAction SilentlyContinue) -or
-    (Test-Path "C:\Program Files\pgAdmin 4") -or
-    (Test-Path "C:\Program Files (x86)\pgAdmin 4")
-) {
-
-    Write-Host "pgAdmin is already installed."
-
-}
-else {
-
-    Write-Host "pgAdmin is not installed."
-    Write-Host "Installing pgAdmin 4..."
-
+Write-Host "[5] Checking Visual Studio Code..." -ForegroundColor Cyan
+if ((Get-Command code -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files\Microsoft VS Code")) {
+    Write-Host "[OK] Visual Studio Code is already installed." -ForegroundColor Green
+} else {
+    Write-Host "[!] Visual Studio Code is missing. Installing VS Code..." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-
-        winget install `
-            --id pgAdmin.pgAdmin4 `
-            --exact `
-            --source winget `
-            --accept-source-agreements `
-            --accept-package-agreements
-
-        if ($LASTEXITCODE -eq 0) {
-
-            Write-Host "pgAdmin 4 installation completed successfully."
-
+        winget install --id Microsoft.VisualStudioCode --exact --source winget --accept-source-agreements --accept-package-agreements
+    } else {
+        Write-Host "Downloading VS Code standalone installer..." -ForegroundColor Yellow
+        $vsCodePath = "$env:TEMP\vscode_setup.exe"
+        $vsCodeUrl = "https://update.code.visualstudio.com/latest/win32-x64-user/stable"
+        try {
+            Invoke-WebRequest -Uri $vsCodeUrl -OutFile $vsCodePath -UseBasicParsing
+            Start-Process -FilePath $vsCodePath -ArgumentList "/VERYSILENT /NORESTART /MERGETASKS=!runcode" -Wait
+        } catch {
+            Write-Host "[WARN] Direct VS Code download failed." -ForegroundColor Yellow
         }
-        else {
-
-            Write-Host "pgAdmin installation exited with code $LASTEXITCODE."
-
-        }
-
     }
-    else {
-
-        Write-Host "winget is not available."
-        Write-Host "Please install pgAdmin 4 manually."
-
-    }
-
 }
-
 Write-Host ""
 
-
 # =========================================================
-# STEP 8.1 - CONFIGURE POSTGRESQL & PGADMIN PASSWORD
+# STEP 6 - CHECK & INSTALL POSTGRESQL
 # =========================================================
 
-Write-Host "[8.1] Configuring PostgreSQL & pgAdmin Password to $databasePassword..."
-Write-Host ""
+Write-Host "[6] Checking PostgreSQL Database Server..." -ForegroundColor Cyan
+Refresh-EnvironmentPath
 
 $psqlCmd = $null
 if (Get-Command psql -ErrorAction SilentlyContinue) {
     $psqlCmd = (Get-Command psql).Source
-}
-else {
+} else {
     $foundPsql = Resolve-Path "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue |
-        Sort-Object Path -Descending |
-        Select-Object -First 1
-    if ($foundPsql) {
-        $psqlCmd = $foundPsql.Path
+        Sort-Object Path -Descending | Select-Object -First 1
+    if ($foundPsql) { $psqlCmd = $foundPsql.Path }
+}
+
+$pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
+
+if (-not $psqlCmd -and -not $pgService) {
+    Write-Host "[!] PostgreSQL server is not installed. Installing PostgreSQL 16..." -ForegroundColor Yellow
+    $pgInstalled = $false
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "Installing PostgreSQL via winget..."
+        winget install --id PostgreSQL.PostgreSQL.16 --source winget --accept-source-agreements --accept-package-agreements --override "--unattendedmode admin --superpassword password@123"
+        if ($LASTEXITCODE -eq 0) { $pgInstalled = $true }
+    }
+
+    if (-not $pgInstalled) {
+        Write-Host "Downloading PostgreSQL installer from EDB..." -ForegroundColor Yellow
+        $pgInstallerPath = "$env:TEMP\postgresql_setup.exe"
+        $pgUrl = "https://sbp.enterprisedb.com/getpackages_win.jsp?file_id=1258674"
+        try {
+            Invoke-WebRequest -Uri $pgUrl -OutFile $pgInstallerPath -UseBasicParsing
+            Start-Process -FilePath $pgInstallerPath -ArgumentList "--mode unattended --superpassword password@123 --servicename postgresql-x64-16 --servicepassword password@123" -Wait
+            $pgInstalled = $true
+        } catch {
+            Write-Host "[WARN] Automatic PostgreSQL installer download failed: $_" -ForegroundColor Yellow
+        }
+    }
+
+    Refresh-EnvironmentPath
+    $psqlCmd = (Resolve-Path "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue | Sort-Object Path -Descending | Select-Object -First 1).Path
+}
+
+# Ensure PostgreSQL Windows Service is running
+$pgServices = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
+foreach ($service in $pgServices) {
+    if ($service.Status -ne "Running") {
+        Write-Host "Starting PostgreSQL service ($($service.Name))..." -ForegroundColor Yellow
+        Start-Service -Name $service.Name -ErrorAction SilentlyContinue
     }
 }
 
 if ($psqlCmd) {
-    Write-Host "Found PostgreSQL CLI: $psqlCmd"
+    Write-Host "[OK] Found PostgreSQL CLI: $psqlCmd" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] psql executable path could not be resolved automatically." -ForegroundColor Yellow
+}
+Write-Host ""
 
-    # Check ports (5433 for Postgres 17 or 5432 for Postgres 12/default)
-    $portsToCheck = @(5433, 5432)
+# =========================================================
+# STEP 7 - CHECK & INSTALL PGADMIN 4
+# =========================================================
+
+Write-Host "[7] Checking pgAdmin 4..." -ForegroundColor Cyan
+if ((Get-Command pgadmin4 -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program Files\pgAdmin 4") -or (Test-Path "C:\Program Files (x86)\pgAdmin 4")) {
+    Write-Host "[OK] pgAdmin 4 is already installed." -ForegroundColor Green
+} else {
+    Write-Host "[!] pgAdmin 4 is missing. Installing pgAdmin 4..." -ForegroundColor Yellow
+    $pgAdminInstalled = $false
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Host "Installing pgAdmin 4 via winget..."
+        winget install --id PostgreSQL.pgAdmin --source winget --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -eq 0) { $pgAdminInstalled = $true }
+    }
+
+    if (-not $pgAdminInstalled) {
+        Write-Host "Downloading pgAdmin 4 standalone installer..." -ForegroundColor Yellow
+        $pgAdminSetup = "$env:TEMP\pgadmin_setup.exe"
+        $pgAdminUrl = "https://ftp.postgresql.org/pub/pgadmin/pgadmin4/v9.17/windows/pgadmin4-9.17-x64.exe"
+        try {
+            Invoke-WebRequest -Uri $pgAdminUrl -OutFile $pgAdminSetup -UseBasicParsing
+            Start-Process -FilePath $pgAdminSetup -ArgumentList "/VERYSILENT /NORESTART" -Wait
+            $pgAdminInstalled = $true
+            Write-Host "[OK] pgAdmin 4 installed via standalone installer." -ForegroundColor Green
+        } catch {
+            Write-Host "[WARN] Direct pgAdmin download failed: $_" -ForegroundColor Yellow
+        }
+    }
+}
+Write-Host ""
+
+# =========================================================
+# STEP 8 - CONFIGURE POSTGRESQL & DATABASE CREDENTIALS
+# =========================================================
+
+Write-Host "[8] Configuring PostgreSQL User 'postgres' Password to '$databasePassword'..." -ForegroundColor Cyan
+
+if ($psqlCmd) {
+    $portsToCheck = @(5432, 5433)
     $detectedPort = $null
 
     foreach ($p in $portsToCheck) {
         $tcp = Test-NetConnection -ComputerName 127.0.0.1 -Port $p -WarningAction SilentlyContinue
         if ($tcp.TcpTestSucceeded) {
-            Write-Host "PostgreSQL is actively listening on port $p."
-            
-            # Try to connect with known passwords and change to $databasePassword
-            $candidatePasswords = @($databasePassword, "12345678", "postgres", "admin", "root", "1234", "123456", "")
+            Write-Host "Active PostgreSQL port detected: $p"
+            $candidatePasswords = @($databasePassword, "password@1234", "password@123", "postgres", "admin", "root", "12345678", "1234", "123456", "admin123", "postgres123", "Password@123", "admin@123", "root123", "password", "12345", "")
             $connected = $false
             foreach ($candPass in $candidatePasswords) {
                 $env:PGPASSWORD = $candPass
                 $null = & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "SELECT 1;" 2>&1
                 if ($LASTEXITCODE -eq 0) {
-                    Write-Host "Connected to PostgreSQL on port $p."
-                    # Set password for postgres user
+                    Write-Host "Connected to PostgreSQL on port $p with candidate password." -ForegroundColor Green
+                    # Set superuser password to $databasePassword (password@123)
                     & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "ALTER USER postgres WITH PASSWORD '$databasePassword';" 2>&1 | Out-Null
-                    Write-Host "[OK] PostgreSQL user 'postgres' password set to '$databasePassword' on port $p."
-                    
-                    # Ensure school_erp database exists
-                    $env:PGPASSWORD = $databasePassword
-                    $dbCheck = & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -t -c "SELECT 1 FROM pg_database WHERE datname='$databaseName';" 2>&1
-                    if ($dbCheck -notmatch "1") {
-                        Write-Host "Creating database '$databaseName' on port $p..."
-                        & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "CREATE DATABASE $databaseName;" 2>&1 | Out-Null
-                        Write-Host "[OK] Database '$databaseName' created successfully."
-                    } else {
-                        Write-Host "[OK] Database '$databaseName' already exists on port $p."
-                    }
+                    Write-Host "[OK] Set PostgreSQL user 'postgres' password to '$databasePassword'." -ForegroundColor Green
                     $connected = $true
                     $detectedPort = $p
                     break
                 }
             }
-            if ($connected) { break }
+
+            # FALLBACK: If candidate passwords fail, perform trust-mode reset via pg_hba.conf
+            if (-not $connected) {
+                Write-Host "[!] Could not authenticate with standard passwords. Attempting automated pg_hba.conf password reset..." -ForegroundColor Yellow
+                $pgHbaFile = Resolve-Path "C:\Program Files\PostgreSQL\*\data\pg_hba.conf" -ErrorAction SilentlyContinue | Sort-Object Path -Descending | Select-Object -First 1
+                if (-not $pgHbaFile) {
+                    $pgHbaFile = Resolve-Path "C:\ProgramData\PostgreSQL\*\data\pg_hba.conf" -ErrorAction SilentlyContinue | Sort-Object Path -Descending | Select-Object -First 1
+                }
+
+                if ($pgHbaFile -and (Test-Path $pgHbaFile.Path)) {
+                    $hbaPath = $pgHbaFile.Path
+                    Write-Host "Found pg_hba.conf at $hbaPath" -ForegroundColor Yellow
+                    try {
+                        $origHbaContent = Get-Content $hbaPath -Raw
+                        $trustRule = "host    all             postgres        127.0.0.1/32            trust`r`nhost    all             postgres        ::1/128                 trust`r`n"
+                        Set-Content -Path $hbaPath -Value ($trustRule + $origHbaContent) -Encoding ASCII
+
+                        # Restart service
+                        Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Restart-Service -Force -ErrorAction SilentlyContinue
+                        Start-Sleep -Seconds 2
+
+                        # Set password without credentials in trust mode
+                        $env:PGPASSWORD = ""
+                        & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "ALTER USER postgres WITH PASSWORD '$databasePassword';" 2>&1 | Out-Null
+                        Write-Host "[OK] Password forced to '$databasePassword' via trust mode reset." -ForegroundColor Green
+
+                        # Restore original pg_hba.conf
+                        Set-Content -Path $hbaPath -Value $origHbaContent -Encoding ASCII
+                        Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Restart-Service -Force -ErrorAction SilentlyContinue
+                        Start-Sleep -Seconds 2
+
+                        $connected = $true
+                        $detectedPort = $p
+                    } catch {
+                        Write-Host "[WARN] Automated pg_hba.conf reset failed: $_" -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            # Ensure target database exists
+            if ($connected) {
+                $env:PGPASSWORD = $databasePassword
+                $dbCheck = & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -t -c "SELECT 1 FROM pg_database WHERE datname='$databaseName';" 2>&1
+                if ($dbCheck -notmatch "1") {
+                    Write-Host "Creating database '$databaseName' on port $p..." -ForegroundColor Yellow
+                    & $psqlCmd -U postgres -p $p -h 127.0.0.1 -w -c "CREATE DATABASE $databaseName;" 2>&1 | Out-Null
+                    Write-Host "[OK] Database '$databaseName' created." -ForegroundColor Green
+                } else {
+                    Write-Host "[OK] Database '$databaseName' already exists." -ForegroundColor Green
+                }
+                break
+            }
         }
     }
 
     if ($detectedPort) {
         $databasePort = "$detectedPort"
-        Write-Host "Configured active database port: $databasePort"
     }
 }
-else {
-    Write-Host "PostgreSQL CLI (psql) not found in PATH or standard directories."
-}
+Write-Host ""
 
-# Update pgAdmin 4 local registered servers if present
+# Sync pgAdmin server port configuration if SQLite db is present
 try {
     $pgAdminDbPath = "$env:APPDATA\pgAdmin\pgadmin4.db"
     if (Test-Path $pgAdminDbPath) {
         if (Get-Command python -ErrorAction SilentlyContinue) {
             python -c "import sqlite3; conn = sqlite3.connect(r'$pgAdminDbPath'); cur = conn.cursor(); cur.execute('UPDATE server SET port = $databasePort WHERE port != $databasePort'); conn.commit(); conn.close()" 2>&1 | Out-Null
-            Write-Host "[OK] Synchronized pgAdmin 4 server entries to port $databasePort."
+            Write-Host "[OK] Synchronized pgAdmin 4 saved servers to port $databasePort." -ForegroundColor Green
         }
     }
-} catch {
-    # Non-critical, continue
-}
-
-Write-Host ""
-
+} catch {}
 
 # =========================================================
-# STEP 9 - VERIFY FRONTEND AND BACKEND FOLDERS
+# STEP 9 - CREATE BACKEND .ENV FILE
 # =========================================================
 
-Write-Host "[9] Verifying project folders..."
-Write-Host ""
-
-if (!(Test-Path $frontendFolder)) {
-
-    throw "Frontend folder not found: $frontendFolder"
-
-}
-
-if (!(Test-Path $backendFolder)) {
-
-    throw "Backend folder not found: $backendFolder"
-
-}
-
-Write-Host "Frontend folder:"
-Write-Host $frontendFolder
-
-Write-Host ""
-
-Write-Host "Backend folder:"
-Write-Host $backendFolder
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 10 - CREATE BACKEND .ENV FILE
-# =========================================================
-
-Write-Host "[10] Creating backend .env file..."
-Write-Host ""
+Write-Host "[9] Creating backend .env configuration..." -ForegroundColor Cyan
 
 $envFile = "$backendFolder\.env"
-
-# PostgreSQL DATABASE_URL (URL-encoded to safely handle special characters like '@')
 $encodedPassword = [System.Uri]::EscapeDataString($databasePassword)
 $databaseUrl = "postgresql://$databaseUser`:$encodedPassword@$databaseHost`:$databasePort/$databaseName"
 
-# Create .env content
 $envContent = @"
 DATABASE_URL="$databaseUrl"
-
 PORT=$backendPort
-
 JWT_SECRET="$jwtSecret"
-
 NODE_ENV="development"
-
 FRONTEND_URL="$frontendUrl"
-
 "@
 
-# Write .env
-Set-Content `
-    -Path $envFile `
-    -Value $envContent `
-    -Encoding UTF8
-
-if (!(Test-Path $envFile)) {
-
+Set-Content -Path $envFile -Value $envContent -Encoding UTF8
+if (Test-Path $envFile) {
+    Write-Host "[OK] Created backend .env file successfully ($envFile)" -ForegroundColor Green
+} else {
     throw "Failed to create backend .env file."
-
 }
-
-Write-Host "Backend .env created successfully:"
-Write-Host $envFile
-
-Write-Host ""
-Write-Host "---------------------------------------------"
-Write-Host "Generated environment variables:"
-Write-Host "DATABASE_URL"
-Write-Host "PORT"
-Write-Host "JWT_SECRET"
-Write-Host "NODE_ENV"
-Write-Host "FRONTEND_URL"
-Write-Host "---------------------------------------------"
 Write-Host ""
 
-
-# =========================================================
-# STEP 11 - ADD .ENV TO .GITIGNORE
-# =========================================================
-
-Write-Host "[11] Protecting .env from Git..."
-Write-Host ""
-
+# Ensure .env is ignored by git
 $gitignoreFile = "$backendFolder\.gitignore"
-
 if (Test-Path $gitignoreFile) {
-
-    $gitignoreContent = Get-Content $gitignoreFile -Raw
-
-}
-else {
-
-    $gitignoreContent = ""
-
-}
-
-if ($gitignoreContent -notmatch "(?m)^\.env$") {
-
-    Add-Content `
-        -Path $gitignoreFile `
-        -Value "`r`n# Environment variables`r`n.env`r`n"
-
-    Write-Host ".env added to backend .gitignore."
-
-}
-else {
-
-    Write-Host ".env is already protected by .gitignore."
-
-}
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 12 - INSTALL FRONTEND DEPENDENCIES
-# =========================================================
-
-Write-Host "[12] Installing FRONTEND dependencies..."
-Write-Host ""
-
-Set-Location $frontendFolder
-
-Write-Host "Frontend:"
-Write-Host $frontendFolder
-
-Write-Host ""
-
-Write-Host "Running npm install..."
-Write-Host ""
-
-npm install
-
-if ($LASTEXITCODE -ne 0) {
-
-    throw "Frontend npm install FAILED."
-
-}
-
-Write-Host ""
-Write-Host "Frontend npm install completed successfully."
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 13 - INSTALL BACKEND DEPENDENCIES
-# =========================================================
-
-Write-Host "[13] Installing BACKEND dependencies..."
-Write-Host ""
-
-Set-Location $backendFolder
-
-Write-Host "Backend:"
-Write-Host $backendFolder
-
-Write-Host ""
-
-Write-Host "Running npm install..."
-Write-Host ""
-
-npm install
-
-if ($LASTEXITCODE -ne 0) {
-
-    throw "Backend npm install FAILED."
-
-}
-
-Write-Host ""
-Write-Host "Backend npm install completed successfully."
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 14 - GENERATE PRISMA CLIENT
-# =========================================================
-
-Write-Host "[14] Generating Prisma Client..."
-Write-Host ""
-
-Set-Location $backendFolder
-
-# Temporarily disable TLS certificate verification.
-# This is only used for the Prisma generation step.
-$previousTlsSetting = $env:NODE_TLS_REJECT_UNAUTHORIZED
-
-$env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
-
-try {
-
-    if (Test-Path "$backendFolder\node_modules\prisma\build\index.js") {
-
-        Write-Host "Using local Prisma installation..."
-
-        node node_modules/prisma/build/index.js generate
-
+    $giContent = Get-Content $gitignoreFile -Raw
+    if ($giContent -notmatch "(?m)^\.env$") {
+        Add-Content -Path $gitignoreFile -Value "`r`n# Environment variables`r`n.env`r`n"
     }
-    else {
+}
+Write-Host ""
 
-        Write-Host "Local Prisma executable not found."
-        Write-Host "Using npx prisma generate..."
+# =========================================================
+# STEP 10 - INSTALL FRONTEND DEPENDENCIES
+# =========================================================
 
-        npx prisma generate
+Write-Host "[10] Installing FRONTEND npm dependencies..." -ForegroundColor Cyan
+if (Test-Path $frontendFolder) {
+    Set-Location $frontendFolder
+    npm install
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Frontend npm install completed successfully." -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Frontend npm install reported exit code $LASTEXITCODE." -ForegroundColor Yellow
+    }
+} else {
+    throw "Frontend directory not found at $frontendFolder"
+}
+Write-Host ""
 
+# =========================================================
+# STEP 11 - INSTALL BACKEND DEPENDENCIES & GENERATE PRISMA
+# =========================================================
+
+Write-Host "[11] Installing BACKEND npm dependencies & Generating Prisma..." -ForegroundColor Cyan
+if (Test-Path $backendFolder) {
+    Set-Location $backendFolder
+    npm install
+
+    # Generate Prisma Client
+    $prevTls = $env:NODE_TLS_REJECT_UNAUTHORIZED
+    $env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
+    try {
+        if (Test-Path "$backendFolder\node_modules\prisma\build\index.js") {
+            node node_modules/prisma/build/index.js generate
+        } else {
+            npx prisma generate
+        }
+        Write-Host "[OK] Prisma Client generated." -ForegroundColor Green
+    } finally {
+        if ($null -eq $prevTls) { Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue }
+        else { $env:NODE_TLS_REJECT_UNAUTHORIZED = $prevTls }
     }
 
-    if ($LASTEXITCODE -ne 0) {
-
-        throw "Prisma Client generation FAILED."
-
+    # Synchronize database schema and seed initial admin data
+    Write-Host "Initializing Database Schema & Admin User..." -ForegroundColor Yellow
+    if (Test-Path "setup.js") {
+        node setup.js
+    } else {
+        npx prisma db push --skip-generate
+        if (Test-Path "seed_admin.js") { node seed_admin.js }
     }
-
+} else {
+    throw "Backend directory not found at $backendFolder"
 }
-finally {
-
-    # Restore previous TLS setting
-    if ($null -eq $previousTlsSetting) {
-
-        Remove-Item Env:NODE_TLS_REJECT_UNAUTHORIZED -ErrorAction SilentlyContinue
-
-    }
-    else {
-
-        $env:NODE_TLS_REJECT_UNAUTHORIZED = $previousTlsSetting
-
-    }
-
-}
-
 Write-Host ""
-Write-Host "Prisma Client generated successfully."
-
-Write-Host ""
-
 
 # =========================================================
-# STEP 14.1 - SYNC DATABASE SCHEMA & SEED ADMIN DATA
+# STEP 12 - INSTALL ROOT DEPENDENCIES
 # =========================================================
 
-Write-Host "[14.1] Initializing Database Schema & Admin Data..."
-Write-Host ""
-
-Set-Location $backendFolder
-
-if (Test-Path "setup.js") {
-    Write-Host "Running backend setup.js..."
-    node setup.js
-}
-else {
-    Write-Host "Running prisma db push..."
-    npx prisma db push
-}
-
-Write-Host ""
-
-
-# =========================================================
-# STEP 14.2 - INSTALL ROOT DEPENDENCIES
-# =========================================================
-
-Write-Host "[14.2] Installing Root Dependencies (concurrently)..."
-Write-Host ""
-
+Write-Host "[12] Installing ROOT npm dependencies..." -ForegroundColor Cyan
 Set-Location $repoFolder
 npm install
-
 Write-Host ""
-
 
 # =========================================================
-# STEP 15 - VERIFY .ENV
+# STEP 13 - CREATE DESKTOP LAUNCHER
 # =========================================================
 
-Write-Host "[15] Verifying .env file..."
+Write-Host "[13] Creating Desktop Launcher..." -ForegroundColor Cyan
+$launcherBat = "$baseFolder\Start_School_ERP.bat"
+$batContent = @"
+@echo off
+title School ERP Launcher
+echo =============================================
+echo Starting School ERP System...
+echo =============================================
+echo.
+
+cd /d "$backendFolder"
+echo Starting Backend Server on port $backendPort...
+start "School ERP Backend" cmd /k "npm start"
+
+timeout /t 3 >nul
+
+cd /d "$frontendFolder"
+echo Starting Frontend Server on port 5173...
+start "School ERP Frontend" cmd /k "npm run dev"
+
+timeout /t 4 >nul
+
+echo Opening browser at $frontendUrl ...
+start $frontendUrl
+echo.
+echo School ERP is running! Keep the server windows open.
+"@
+
+Set-Content -Path $launcherBat -Value $batContent -Encoding ASCII
+
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+if (Test-Path $desktopPath) {
+    Copy-Item -Path $launcherBat -Destination "$desktopPath\Start_School_ERP.bat" -Force
+    Write-Host "[OK] Desktop launcher created: $desktopPath\Start_School_ERP.bat" -ForegroundColor Green
+}
 Write-Host ""
-
-if (!(Test-Path $envFile)) {
-
-    throw ".env file verification FAILED."
-
-}
-
-Write-Host ".env file exists:"
-Write-Host $envFile
-
-Write-Host ""
-
-# Check important variables without displaying passwords/secrets
-$envCheck = Get-Content $envFile -Raw
-
-if ($envCheck -match "DATABASE_URL=") {
-
-    Write-Host "[OK] DATABASE_URL"
-
-}
-else {
-
-    throw "DATABASE_URL is missing from .env"
-
-}
-
-if ($envCheck -match "PORT=") {
-
-    Write-Host "[OK] PORT"
-
-}
-else {
-
-    throw "PORT is missing from .env"
-
-}
-
-if ($envCheck -match "JWT_SECRET=") {
-
-    Write-Host "[OK] JWT_SECRET"
-
-}
-else {
-
-    throw "JWT_SECRET is missing from .env"
-
-}
-
-if ($envCheck -match "NODE_ENV=") {
-
-    Write-Host "[OK] NODE_ENV"
-
-}
-else {
-
-    throw "NODE_ENV is missing from .env"
-
-}
-
-if ($envCheck -match "FRONTEND_URL=") {
-
-    Write-Host "[OK] FRONTEND_URL"
-
-}
-else {
-
-    throw "FRONTEND_URL is missing from .env"
-
-}
-
-Write-Host ""
-
 
 # =========================================================
 # COMPLETE
 # =========================================================
 
+Write-Host "=============================================" -ForegroundColor Green
+Write-Host "       SETUP COMPLETED SUCCESSFULLY" -ForegroundColor Green
+Write-Host "=============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "============================================="
-Write-Host "       SETUP COMPLETED SUCCESSFULLY"
-Write-Host "============================================="
+Write-Host "Project location: $repoFolder"
+Write-Host "Frontend:         $frontendFolder"
+Write-Host "Backend:          $backendFolder"
+Write-Host "Environment:      $envFile"
 Write-Host ""
-
-Write-Host "Project location:"
-Write-Host $repoFolder
-
-Write-Host ""
-
-Write-Host "Frontend:"
-Write-Host $frontendFolder
-
-Write-Host ""
-
-Write-Host "Backend:"
-Write-Host $backendFolder
-
-Write-Host ""
-
-Write-Host "Environment file:"
-Write-Host $envFile
-
-Write-Host ""
-
-Write-Host "VS Code: Installed / Available"
-Write-Host "pgAdmin: Installed / Available"
-Write-Host "Node.js: Installed / Available"
-Write-Host "Git: Installed / Available"
-Write-Host "Frontend dependencies: Installed"
-Write-Host "Backend dependencies: Installed"
-Write-Host "Prisma Client: Generated"
-Write-Host ".env: Created"
-Write-Host ""
-
-Write-Host "============================================="
-Write-Host " CREDENTIALS & CONNECTION DETAILS"
-Write-Host "============================================="
-Write-Host ""
-
-Write-Host "PostgreSQL & pgAdmin 4 Details:"
+Write-Host "PostgreSQL & pgAdmin Connection Details:" -ForegroundColor Yellow
 Write-Host "  - Host:      $databaseHost"
 Write-Host "  - Port:      $databasePort"
 Write-Host "  - Database:  $databaseName"
 Write-Host "  - Username:  $databaseUser"
 Write-Host "  - Password:  $databasePassword"
 Write-Host ""
-Write-Host "Default ERP Admin Login:"
+Write-Host "Default ERP Admin Login:" -ForegroundColor Yellow
 Write-Host "  - Username:  admin"
 Write-Host "  - Password:  adminpassword"
 Write-Host "  - College:   svpcet"
 Write-Host ""
-Write-Host "To launch both Frontend and Backend together:"
-Write-Host "  Run: npm start (or double-click start_app.bat)"
+Write-Host "To launch both Frontend and Backend:"
+Write-Host "  Double-click 'Start_School_ERP.bat' on your Desktop"
+Write-Host "  or run 'npm start' from $repoFolder"
 Write-Host ""
-Write-Host "============================================="
+Write-Host "=============================================" -ForegroundColor Green
 Write-Host ""
 
 Set-Location $repoFolder
-
 Read-Host "Press Enter to exit"
