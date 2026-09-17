@@ -18,14 +18,14 @@ $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "[!] Administrator privileges are required to install system services." -ForegroundColor Yellow
-    Write-Host "[!] Requesting Administrator elevation..." -ForegroundColor Yellow
+    Write-Host "[!] Administrator privileges are recommended to install system services." -ForegroundColor Yellow
+    Write-Host "[!] Attempting Administrator elevation..." -ForegroundColor Yellow
     try {
         Start-Process powershell -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`""
         exit
     } catch {
-        Write-Host "[ERROR] Auto-elevation failed. Please right-click PowerShell and choose 'Run as Administrator'." -ForegroundColor Red
-        throw "Script execution aborted: Administrator rights required."
+        Write-Host "[WARN] Auto-elevation could not be launched ($($_.Exception.Message))." -ForegroundColor Yellow
+        Write-Host "[INFO] Continuing setup in current user context..." -ForegroundColor Cyan
     }
 }
 
@@ -495,44 +495,175 @@ npm install
 Write-Host ""
 
 # =========================================================
-# STEP 13 - CREATE DESKTOP LAUNCHER
+# STEP 13 - CONFIGURE AUTOMATED VBS STARTUP LAUNCHER
 # =========================================================
 
-Write-Host "[13] Creating Desktop Launcher..." -ForegroundColor Cyan
-$launcherBat = "$baseFolder\Start_School_ERP.bat"
-$batContent = @"
-@echo off
-title School ERP Launcher
-echo =============================================
-echo Starting School ERP System...
-echo =============================================
-echo.
+Write-Host "[13] Configuring Automated VBS Startup Launcher (Shell Startup)..." -ForegroundColor Cyan
 
-cd /d "$backendFolder"
-echo Starting Backend Server on port $backendPort...
-start "School ERP Backend" cmd /k "npm start"
+# Clean up legacy Desktop batch file if it exists
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+if (Test-Path "$desktopPath\Start_School_ERP.bat") {
+    Remove-Item -Path "$desktopPath\Start_School_ERP.bat" -Force -ErrorAction SilentlyContinue
+    Write-Host "[OK] Removed legacy Desktop .bat launcher." -ForegroundColor Yellow
+}
 
-timeout /t 3 >nul
+# Generate master VBScript launcher in the base project folder
+$vbsLauncher = "$baseFolder\Start_School_ERP.vbs"
 
-cd /d "$frontendFolder"
-echo Starting Frontend Server on port 5173...
-start "School ERP Frontend" cmd /k "npm run dev"
+$vbsContent = @"
+' =========================================================
+' School ERP Automated Silent Startup Launcher
+' Dynamically resolves system paths and boots servers silently
+' =========================================================
+Option Explicit
 
-timeout /t 4 >nul
+Dim WshShell, fso, scriptDir, backendDir, frontendDir, frontendUrl, wStyle
 
-echo Opening browser at $frontendUrl ...
-start $frontendUrl
-echo.
-echo School ERP is running! Keep the server windows open.
+Set WshShell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+
+' Window Style: 0 = Hidden (Silent background mode - no black cmd windows)
+'               1 = Normal visible window
+'               7 = Minimized window
+wStyle = 0
+
+' Determine directory dynamically based on script location on this system
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+
+' Dynamic path resolution for Backend
+If fso.FolderExists(scriptDir & "\newzambia\backend") Then
+    backendDir = scriptDir & "\newzambia\backend"
+ElseIf fso.FolderExists(scriptDir & "\backend") Then
+    backendDir = scriptDir & "\backend"
+ElseIf fso.FolderExists("$backendFolder") Then
+    backendDir = "$backendFolder"
+Else
+    backendDir = ""
+End If
+
+' Dynamic path resolution for Frontend
+If fso.FolderExists(scriptDir & "\newzambia\frontend") Then
+    frontendDir = scriptDir & "\newzambia\frontend"
+ElseIf fso.FolderExists(scriptDir & "\frontend") Then
+    frontendDir = scriptDir & "\frontend"
+ElseIf fso.FolderExists("$frontendFolder") Then
+    frontendDir = "$frontendFolder"
+Else
+    frontendDir = ""
+End If
+
+frontendUrl = "$frontendUrl"
+
+If backendDir = "" Or frontendDir = "" Then
+    MsgBox "School ERP Startup Error: One or more project folders could not be located." & vbCrLf & _
+           "Base Directory: " & scriptDir & vbCrLf & _
+           "Backend Directory: " & backendDir & vbCrLf & _
+           "Frontend Directory: " & frontendDir, vbCritical, "School ERP Launcher Error"
+    WScript.Quit 1
+End If
+
+' Launch Backend Server silently in the background
+WshShell.Run "cmd.exe /c cd /d """ & backendDir & """ && npm start", wStyle, False
+
+' Pause 3 seconds for Backend server initialization
+WScript.Sleep 3000
+
+' Launch Frontend Dev Server silently in the background
+WshShell.Run "cmd.exe /c cd /d """ & frontendDir & """ && npm run dev", wStyle, False
+
+' Pause 4 seconds for Frontend dev server to be ready
+WScript.Sleep 4000
+
+' Open default web browser to the School ERP frontend
+WshShell.Run frontendUrl, 1, False
 "@
 
-Set-Content -Path $launcherBat -Value $batContent -Encoding ASCII
-
-$desktopPath = [Environment]::GetFolderPath("Desktop")
-if (Test-Path $desktopPath) {
-    Copy-Item -Path $launcherBat -Destination "$desktopPath\Start_School_ERP.bat" -Force
-    Write-Host "[OK] Desktop launcher created: $desktopPath\Start_School_ERP.bat" -ForegroundColor Green
+Set-Content -Path $vbsLauncher -Value $vbsContent -Encoding ASCII
+if (Test-Path $vbsLauncher) {
+    Write-Host "[OK] VBScript startup launcher created: $vbsLauncher" -ForegroundColor Green
+} else {
+    throw "Failed to create VBScript launcher file at $vbsLauncher."
 }
+
+# Resolve all applicable Startup folders (handles Administrator elevation and standard user)
+$targetStartupFolders = @()
+
+# 1. Interactive logged-in desktop user (e.g. student when elevated as Administrator)
+$loggedOnUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+if ($loggedOnUser) {
+    $rawUser = $loggedOnUser.Split('\')[-1]
+    $userStartup = "C:\Users\$rawUser\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+    if (Test-Path $userStartup) { $targetStartupFolders += $userStartup }
+}
+
+# 2. Current environment Startup folder
+$envStartup = [Environment]::GetFolderPath("Startup")
+if ($envStartup -and (Test-Path $envStartup)) { $targetStartupFolders += $envStartup }
+
+# 3. Fallback APPDATA Startup
+$appDataStartup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+if (Test-Path $appDataStartup) { $targetStartupFolders += $appDataStartup }
+
+# 4. CommonStartup (Machine-wide / All Users startup)
+$commonStartup = [Environment]::GetFolderPath("CommonStartup")
+if ($commonStartup -and (Test-Path $commonStartup)) { $targetStartupFolders += $commonStartup }
+
+# De-duplicate
+$targetStartupFolders = $targetStartupFolders | Select-Object -Unique
+
+# Create Windows Startup Shortcut pointing to the VBS launcher in all applicable folders
+$wshExe = (Get-Command wscript.exe -ErrorAction SilentlyContinue).Source
+if (-not $wshExe) { $wshExe = "C:\Windows\System32\wscript.exe" }
+$wshCom = New-Object -ComObject WScript.Shell
+
+foreach ($sFolder in $targetStartupFolders) {
+    try {
+        if (-not (Test-Path $sFolder)) {
+            New-Item -ItemType Directory -Path $sFolder -Force | Out-Null
+        }
+        $shortcutPath = Join-Path $sFolder "School_ERP_AutoStart.lnk"
+        $shortcut = $wshCom.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $wshExe
+        $shortcut.Arguments = "`"$vbsLauncher`""
+        $shortcut.WorkingDirectory = "$baseFolder"
+        $shortcut.Description = "Automated Silent Startup for School ERP System"
+        $shortcut.Save()
+        Write-Host "[OK] Startup shortcut registered successfully: $shortcutPath" -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Could not register shortcut in $($sFolder) - $_" -ForegroundColor Yellow
+    }
+}
+
+# Clean up any legacy batch files if present
+$desktopPath = [Environment]::GetFolderPath("Desktop")
+if (Test-Path "$desktopPath\Start_School_ERP.bat") {
+    Remove-Item -Path "$desktopPath\Start_School_ERP.bat" -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$baseFolder\Start_School_ERP.bat") {
+    Remove-Item -Path "$baseFolder\Start_School_ERP.bat" -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$baseFolder\Stop_School_ERP.bat") {
+    Remove-Item -Path "$baseFolder\Stop_School_ERP.bat" -Force -ErrorAction SilentlyContinue
+}
+
+# Generate companion Stop helper script using VBScript (No .bat files)
+$stopVbs = "$baseFolder\Stop_School_ERP.vbs"
+$stopVbsContent = @"
+' =========================================================
+' School ERP Silent Background Process Stopper (.vbs)
+' =========================================================
+Option Explicit
+
+Dim WshShell
+Set WshShell = CreateObject("WScript.Shell")
+
+' Terminate Node.js processes listening on ports $backendPort and 5173
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""foreach (`$p in @($backendPort, 5173)) { `$c = Get-NetTCPConnection -LocalPort `$p -State Listen -ErrorAction SilentlyContinue; if (`$c) { Stop-Process -Id `$c.OwningProcess -Force -ErrorAction SilentlyContinue } }""", 0, True
+
+MsgBox "All School ERP background servers have been stopped.", vbInformation, "School ERP"
+"@
+Set-Content -Path $stopVbs -Value $stopVbsContent -Encoding ASCII
+Write-Host "[OK] VBScript stop helper created: $stopVbs" -ForegroundColor Green
 Write-Host ""
 
 # =========================================================
@@ -560,12 +691,20 @@ Write-Host "  - Username:  admin"
 Write-Host "  - Password:  adminpassword"
 Write-Host "  - College:   svpcet"
 Write-Host ""
-Write-Host "To launch both Frontend and Backend:"
-Write-Host "  Double-click 'Start_School_ERP.bat' on your Desktop"
-Write-Host "  or run 'npm start' from $repoFolder"
+Write-Host "Automated System Startup Details:" -ForegroundColor Cyan
+Write-Host "  - Startup Folder:   $startupFolder"
+Write-Host "  - Startup Shortcut: $shortcutPath"
+Write-Host "  - Target Launcher:  $vbsLauncher"
+Write-Host ""
+Write-Host "Control Options (All VBScript - No .bat files):"
+Write-Host "  - Auto-start:       Executes automatically on Windows boot/login"
+Write-Host "  - Run manually:     Double-click '$vbsLauncher'"
+Write-Host "  - Stop servers:     Double-click '$stopVbs'"
+Write-Host "  - Dev terminal:     Run 'npm start' from $repoFolder"
 Write-Host ""
 Write-Host "=============================================" -ForegroundColor Green
 Write-Host ""
 
-Set-Location $repoFolder
-Read-Host "Press Enter to exit"
+if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    try { Read-Host "Press Enter to exit" } catch {}
+}
