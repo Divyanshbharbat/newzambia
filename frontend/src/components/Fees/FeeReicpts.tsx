@@ -1,32 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, AlignmentType, BorderStyle } from "docx";
 import { saveAs } from "file-saver";
 import { feetable, getInstitutionNameAndLogo } from "../../apis/api";
-import { useRecoilValue } from "recoil";
-import { installmentArr } from "../../store/store";
 
 const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
 
-  const [title ,setTitle] = useState<string>('');
   const [, setFeedata] = useState<any>();
   const [sName, setSName] = useState<string>('ST.VINCENT PALLOTTI SCHOOL ZAMBIA');
   const [sAddress, setSAddress] = useState<string>('WESTWOOD, LUSAKA, ZAMBIA');
-  const installmentArray = useRecoilValue(installmentArr);
   const fetchFeeData = async () => {
     try {
-      // First, fetch complete student data with all fees (without title filter)
       const { data: allFeesData } = await feetable(id, '');
       const completeData = allFeesData[0];
-      
-      // Then fetch the current installment specific data to get the current installment amount
-      const { data: currentInstallmentData } = await feetable(id, title);
-      
-      // Merge the data - use all fees from allFeesData but current amount from currentInstallmentData
-      if (currentInstallmentData && currentInstallmentData[0]) {
-        completeData.currentInstallmentAmount = currentInstallmentData[0].fees?.[0]?.amount || 0;
-      }
-      
       setFeedata(completeData);
       generateWordDocument(completeData);
     } catch (error) {
@@ -61,9 +47,6 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
     const formattedDate = `${dayOfMonth}/${month}/${year}`;
 
     // Calculate all amounts
-    const currentInstallmentAmount = data.currentInstallmentAmount !== undefined 
-      ? data.currentInstallmentAmount 
-      : (data.fees && data.fees.length > 0 ? data.fees[0].amount : 0);
     const standardTotalFees = Number(data.standardTotalFees || 0);
 
     // Calculate inventory total
@@ -88,30 +71,186 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
     // Remaining Balance = Grand Total - Total Amount Paid
     const remainingBalance = Math.max(0, grandTotal - totalFeesPaid);
 
+    // Cell padding helper to ensure comfortable spacing away from vertical borders
+    const cellPadding = { top: 60, bottom: 60, left: 140, right: 140 };
+
+    // Helper to generate Payment Summary Table (creates fresh Table instances)
+    const buildPaymentSummaryTable = () => {
+      const paymentSummaryRows: TableRow[] = [
+        new TableRow({
+          children: [
+            new TableCell({
+              width: { size: 60, type: "pct" },
+              shading: { fill: "E8F4F8" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: "Total School Fees", bold: true, size: 18 })], spacing: { before: 10, after: 10 } })],
+            }),
+            new TableCell({
+              width: { size: 40, type: "pct" },
+              shading: { fill: "E8F4F8" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: `K ${standardTotalFees.toFixed(2)}`, bold: true, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+            }),
+          ],
+        }),
+        new TableRow({
+          children: [
+            new TableCell({
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: "Inventory Amount", size: 18 })], spacing: { before: 10, after: 10 } })],
+            }),
+            new TableCell({
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: `K ${inventoryTotal.toFixed(2)}`, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+            }),
+          ],
+        }),
+      ];
+
+      if (data.lunchAccepted && lunchPrice > 0) {
+        paymentSummaryRows.push(
+          new TableRow({
+            children: [
+              new TableCell({
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Lunch / Meals Charges", size: 18 })], spacing: { before: 10, after: 10 } })],
+              }),
+              new TableCell({
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: `K ${lunchPrice.toFixed(2)}`, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+              }),
+            ],
+          })
+        );
+      }
+
+      if (data.busAccepted && busPrice > 0) {
+        paymentSummaryRows.push(
+          new TableRow({
+            children: [
+              new TableCell({
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Bus / Transport Charges", size: 18 })], spacing: { before: 10, after: 10 } })],
+              }),
+              new TableCell({
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: `K ${busPrice.toFixed(2)}`, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+              }),
+            ],
+          })
+        );
+      }
+
+      paymentSummaryRows.push(
+        new TableRow({
+          children: [
+            new TableCell({
+              shading: { fill: "FFF3E0" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: "Grand Total (Current)", bold: true, size: 18 })], spacing: { before: 10, after: 10 } })],
+            }),
+            new TableCell({
+              shading: { fill: "FFF3E0" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: `K ${grandTotal.toFixed(2)}`, bold: true, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+            }),
+          ],
+        })
+      );
+
+      // Payment history
+      if (data.fees && data.fees.length > 0) {
+        paymentSummaryRows.push(
+          new TableRow({
+            children: [
+              new TableCell({
+                columnSpan: 2,
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "PAYMENT HISTORY", bold: true, size: 18 })], spacing: { before: 10, after: 10 } })],
+                shading: { fill: "D4E6F1" },
+              }),
+            ],
+          })
+        );
+
+        data.fees.forEach((fee: any, index: number) => {
+          const num = index + 1;
+          const suffix = num === 1 ? 'st' : num === 2 ? 'nd' : num === 3 ? 'rd' : 'th';
+          paymentSummaryRows.push(
+            new TableRow({
+              children: [
+                new TableCell({
+                  margins: cellPadding,
+                  children: [new Paragraph({ children: [new TextRun({ text: `  Paid ${num}${suffix} Installment`, size: 18 })], spacing: { before: 10, after: 10 } })],
+                }),
+                new TableCell({
+                  margins: cellPadding,
+                  children: [new Paragraph({ children: [new TextRun({ text: `K ${parseFloat(fee.amount).toFixed(2)}`, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+                }),
+              ],
+            })
+          );
+        });
+      }
+
+      paymentSummaryRows.push(
+        new TableRow({
+          children: [
+            new TableCell({
+              shading: { fill: "E8F5E9" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: "Total Amount Paid", bold: true, size: 18 })], spacing: { before: 10, after: 10 } })],
+            }),
+            new TableCell({
+              shading: { fill: "E8F5E9" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: `K ${totalFeesPaid.toFixed(2)}`, bold: true, size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+            }),
+          ],
+        }),
+        new TableRow({
+          children: [
+            new TableCell({
+              shading: { fill: "FFEBEE" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: "Remaining Balance", bold: true, color: "C62828", size: 18 })], spacing: { before: 10, after: 10 } })],
+            }),
+            new TableCell({
+              shading: { fill: "FFEBEE" },
+              margins: cellPadding,
+              children: [new Paragraph({ children: [new TextRun({ text: `K ${remainingBalance.toFixed(2)}`, bold: true, color: "C62828", size: 18 })], alignment: AlignmentType.RIGHT, spacing: { before: 10, after: 10 } })],
+            }),
+          ],
+        })
+      );
+
+      return new Table({
+        width: { size: 100, type: "pct" },
+        margins: cellPadding,
+        rows: paymentSummaryRows,
+      });
+    };
+
     const documentChildren: any[] = [];
 
-    // ===================== SCHOOL HEADER =====================
+    // ===================== 1. SCHOOL HEADER (INSTITUTE COPY) =====================
     const schoolDisplayName = (sName && sName !== 'School') ? sName : "ST.VINCENT PALLOTTI SCHOOL ZAMBIA";
     const addressToUse = sAddress || "WESTWOOD, LUSAKA, ZAMBIA";
     documentChildren.push(
       new Paragraph({
-        children: [new TextRun({ text: schoolDisplayName, bold: true, size: 44, color: "1E3A8A" })],
+        children: [new TextRun({ text: schoolDisplayName, bold: true, size: 30, color: "1E3A8A" })],
         alignment: AlignmentType.CENTER,
-        spacing: { after: 50 },
+        spacing: { before: 0, after: 15 },
       }),
       new Paragraph({
-        children: [new TextRun({ text: addressToUse, size: 20 })],
+        children: [new TextRun({ text: addressToUse, size: 17, color: "444444" })],
         alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
-      })
-    );
-
-    // ===================== RECEIPT TITLE =====================
-    documentChildren.push(
+        spacing: { before: 0, after: 25 },
+      }),
       new Paragraph({
-        children: [new TextRun({ text: "FEE RECEIPT & INVOICE", bold: true, size: 32, color: "1E3A8A" })],
+        children: [new TextRun({ text: "FEE RECEIPT & INVOICE (INSTITUTE COPY)", bold: true, size: 22, color: "1E3A8A" })],
         alignment: AlignmentType.CENTER,
-        spacing: { after: 100 },
+        spacing: { before: 160, after: 200 },
       })
     );
 
@@ -119,25 +258,30 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
     documentChildren.push(
       new Table({
         width: { size: 100, type: "pct" },
+        margins: cellPadding,
         rows: [
           new TableRow({
             children: [
               new TableCell({
                 width: { size: 50, type: "pct" },
                 borders: { bottom: { style: BorderStyle.SINGLE } },
+                margins: cellPadding,
                 children: [
                   new Paragraph({
-                    children: [new TextRun({ text: "Receipt Date: ", bold: true }), new TextRun({ text: formattedDate })],
+                    children: [new TextRun({ text: "Receipt Date: ", bold: true, size: 18 }), new TextRun({ text: formattedDate, size: 18 })],
+                    spacing: { before: 10, after: 10 },
                   }),
                 ],
               }),
               new TableCell({
                 width: { size: 50, type: "pct" },
                 borders: { bottom: { style: BorderStyle.SINGLE } },
+                margins: cellPadding,
                 children: [
                   new Paragraph({
-                    children: [new TextRun({ text: "Receipt No: ", bold: true }), new TextRun({ text: `REC-${data.id}-${year}` })],
+                    children: [new TextRun({ text: "Receipt No: ", bold: true, size: 18 }), new TextRun({ text: `REC-${data.id}-${year}`, size: 18 })],
                     alignment: AlignmentType.RIGHT,
+                    spacing: { before: 10, after: 10 },
                   }),
                 ],
               }),
@@ -147,73 +291,82 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
       })
     );
 
-    documentChildren.push(new Paragraph({ text: "", spacing: { after: 200 } }));
-
-    // ===================== STUDENT DETAILS =====================
+    // ===================== STUDENT DETAILS (INSTITUTE COPY) =====================
     documentChildren.push(
       new Paragraph({
-        children: [new TextRun({ text: "STUDENT DETAILS", bold: true, size: 24, color: "1E3A8A" })],
-        spacing: { after: 150 },
+        children: [new TextRun({ text: "STUDENT DETAILS", bold: true, size: 20, color: "1E3A8A" })],
+        spacing: { before: 200, after: 160 },
       }),
       new Table({
         width: { size: 100, type: "pct" },
+        margins: cellPadding,
         rows: [
           new TableRow({
             children: [
               new TableCell({
-                width: { size: 25, type: "pct" },
+                width: { size: 20, type: "pct" },
                 shading: { fill: "E8F4F8" },
-                children: [new Paragraph({ children: [new TextRun({ text: "Name", bold: true })] })],
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Name", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
-                children: [new Paragraph({ text: name || "N/A" })],
+                width: { size: 30, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: name || "N/A", size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
+                width: { size: 20, type: "pct" },
                 shading: { fill: "E8F4F8" },
-                children: [new Paragraph({ children: [new TextRun({ text: "Class", bold: true })] })],
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Class", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
-                children: [new Paragraph({ text: data.standard || "N/A" })],
+                width: { size: 30, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: data.standard || "N/A", size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
             ],
           }),
           new TableRow({
             children: [
               new TableCell({
-                width: { size: 25, type: "pct" },
+                width: { size: 20, type: "pct" },
                 shading: { fill: "E8F4F8" },
-                children: [new Paragraph({ children: [new TextRun({ text: "Roll Number", bold: true })] })],
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Roll Number", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
-                children: [new Paragraph({ text: data.rollNo ? data.rollNo.toString() : "N/A" })],
+                width: { size: 30, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: data.rollNo ? data.rollNo.toString() : "N/A", size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
+                width: { size: 20, type: "pct" },
                 shading: { fill: "E8F4F8" },
-                children: [new Paragraph({ children: [new TextRun({ text: "Admission No", bold: true })] })],
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Admission No", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
-                width: { size: 25, type: "pct" },
-                children: [new Paragraph({ text: data.id ? data.id.toString() : "N/A" })],
+                width: { size: 30, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: data.id ? data.id.toString() : "N/A", size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
             ],
           }),
           new TableRow({
             children: [
               new TableCell({
-                width: { size: 25, type: "pct" },
+                width: { size: 20, type: "pct" },
                 shading: { fill: "E8F4F8" },
+                margins: cellPadding,
                 columnSpan: 2,
-                children: [new Paragraph({ children: [new TextRun({ text: "Academic Year", bold: true })] })],
+                children: [new Paragraph({ children: [new TextRun({ text: "Academic Year", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
               new TableCell({
                 width: { size: 50, type: "pct" },
+                margins: cellPadding,
                 columnSpan: 2,
-                children: [new Paragraph({ text: data.session || `${year}-${year + 1}` })],
+                children: [new Paragraph({ children: [new TextRun({ text: (data.session ? String(data.session) : String(year)), size: 18 })], spacing: { before: 12, after: 12 } })],
               }),
             ],
           }),
@@ -221,422 +374,186 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
       })
     );
 
-    documentChildren.push(new Paragraph({ text: "", spacing: { after: 250 } }));
-
-    // ===================== FEE STRUCTURE (INSTALLMENT-WISE) =====================
+    // ===================== PAYMENT SUMMARY (INSTITUTE COPY) =====================
     documentChildren.push(
       new Paragraph({
-        children: [new TextRun({ text: "FEE STRUCTURE - INSTALLMENT WISE", bold: true, size: 24, color: "1E3A8A" })],
-        spacing: { after: 150 },
+        children: [new TextRun({ text: "PAYMENT SUMMARY", bold: true, size: 20, color: "1E3A8A" })],
+        spacing: { before: 200, after: 160 },
+      }),
+      buildPaymentSummaryTable(),
+      new Paragraph({
+        children: [new TextRun({ text: "Authorized Signature: ______________________", italics: true, size: 17 })],
+        alignment: AlignmentType.RIGHT,
+        spacing: { before: 120, after: 120 },
       })
     );
 
-    // Fee structure table header
-    const feeStructureRows: TableRow[] = [
-      new TableRow({
-        children: [
-          new TableCell({
-            shading: { fill: "1E3A8A" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Description", bold: true, color: "FFFFFF" })] })],
-            borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE } },
-          }),
-          new TableCell({
-            shading: { fill: "1E3A8A" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Amount (K)", bold: true, color: "FFFFFF" })], alignment: AlignmentType.RIGHT })],
-            borders: { top: { style: BorderStyle.SINGLE }, bottom: { style: BorderStyle.SINGLE } },
-          }),
-        ],
-      }),
-    ];
-
-    // Add school fee
-    feeStructureRows.push(
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: "School Fee", bold: true })] })],
-            shading: { fill: "F0F0F0" },
-          }),
-          new TableCell({
-            children: [new Paragraph({ text: "", alignment: AlignmentType.RIGHT })],
-            shading: { fill: "F0F0F0" },
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            children: [new Paragraph({ text: "  \u2022 " + (title || "Tuition Fee") })],
-          }),
-          new TableCell({
-            children: [new Paragraph({ text: `K ${currentInstallmentAmount}`, alignment: AlignmentType.RIGHT })],
-          }),
-        ],
-      })
-    );
-
+    // ===================== DASHED CUT LINE (FULL TABLE LENGTH) =====================
     documentChildren.push(
       new Table({
         width: { size: 100, type: "pct" },
-        rows: feeStructureRows,
-      })
-    );
-
-    documentChildren.push(new Paragraph({ text: "", spacing: { after: 150 } }));
-
-    // ===================== INVENTORY SECTION =====================
-    if (inventoryItems.length > 0) {
-      documentChildren.push(
-        new Paragraph({
-          children: [new TextRun({ text: "INVENTORY / MATERIALS CHARGES", bold: true, size: 24, color: "1E3A8A" })],
-          spacing: { after: 150 },
-        })
-      );
-
-      const inventoryTableRows: TableRow[] = [
-        new TableRow({
-          children: [
-            new TableCell({
-              width: { size: 40, type: "pct" },
-              shading: { fill: "1E3A8A" },
-              children: [new Paragraph({ children: [new TextRun({ text: "Item Name", bold: true, color: "FFFFFF" })] })],
-            }),
-            new TableCell({
-              width: { size: 20, type: "pct" },
-              shading: { fill: "1E3A8A" },
-              children: [new Paragraph({ children: [new TextRun({ text: "Qty", bold: true, color: "FFFFFF" })], alignment: AlignmentType.CENTER })],
-            }),
-            new TableCell({
-              width: { size: 20, type: "pct" },
-              shading: { fill: "1E3A8A" },
-              children: [new Paragraph({ children: [new TextRun({ text: "Price/Item (K)", bold: true, color: "FFFFFF" })], alignment: AlignmentType.RIGHT })],
-            }),
-            new TableCell({
-              width: { size: 20, type: "pct" },
-              shading: { fill: "1E3A8A" },
-              children: [new Paragraph({ children: [new TextRun({ text: "Total (K)", bold: true, color: "FFFFFF" })], alignment: AlignmentType.RIGHT })],
-            }),
-          ],
-        }),
-      ];
-
-      inventoryItems.forEach((item: any) => {
-        const pricePerItem = item.quantityPurchased > 0 ? item.totalPrice / item.quantityPurchased : 0;
-        inventoryTableRows.push(
+        borders: {
+          top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          bottom: { style: BorderStyle.DASHED, size: 8, color: "777777" },
+          left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          insideVertical: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+        },
+        rows: [
           new TableRow({
             children: [
               new TableCell({
-                children: [new Paragraph({ text: item.inventory?.itemName || "Item" })],
-              }),
-              new TableCell({
-                children: [new Paragraph({ text: item.quantityPurchased.toString(), alignment: AlignmentType.CENTER })],
-              }),
-              new TableCell({
-                children: [new Paragraph({ text: `K ${pricePerItem.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-              }),
-              new TableCell({
-                children: [new Paragraph({ text: `K ${item.totalPrice.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
+                width: { size: 100, type: "pct" },
+                borders: {
+                  top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  bottom: { style: BorderStyle.DASHED, size: 8, color: "777777" },
+                  left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                },
+                children: [
+                  new Paragraph({
+                    children: [],
+                    spacing: { before: 80, after: 80 },
+                  }),
+                ],
               }),
             ],
-          })
-        );
-      });
+          }),
+        ],
+      })
+    );
 
-      // Inventory total
-      inventoryTableRows.push(
-        new TableRow({
-          children: [
-            new TableCell({
-              columnSpan: 3,
-              children: [new Paragraph({ children: [new TextRun({ text: "Inventory Total", bold: true })], alignment: AlignmentType.RIGHT })],
-              shading: { fill: "F0F0F0" },
-              borders: { top: { style: BorderStyle.SINGLE } },
-            }),
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: `K ${inventoryTotal.toFixed(2)}`, bold: true })], alignment: AlignmentType.RIGHT })],
-              shading: { fill: "F0F0F0" },
-              borders: { top: { style: BorderStyle.SINGLE } },
-            }),
-          ],
-        })
-      );
-
-      documentChildren.push(
-        new Table({
-          width: { size: 100, type: "pct" },
-          rows: inventoryTableRows,
-        })
-      );
-
-      documentChildren.push(new Paragraph({ text: "", spacing: { after: 150 } }));
-    }
-
-    // ===================== OPTIONAL SECTIONS =====================
-    // Lunch Section
-    if (data.lunchAccepted && lunchPrice > 0) {
-      documentChildren.push(
-        new Paragraph({
-          children: [new TextRun({ text: "LUNCH / MEALS CHARGES", bold: true, size: 24, color: "1E3A8A" })],
-          spacing: { after: 150 },
-        }),
-        new Table({
-          width: { size: 100, type: "pct" },
-          rows: [
-            new TableRow({
-              children: [
-                new TableCell({
-                  shading: { fill: "1E3A8A" },
-                  width: { size: 70, type: "pct" },
-                  children: [new Paragraph({ children: [new TextRun({ text: "School Lunch / Meals Plan", bold: true, color: "FFFFFF" })] })],
-                }),
-                new TableCell({
-                  shading: { fill: "1E3A8A" },
-                  width: { size: 30, type: "pct" },
-                  children: [new Paragraph({ children: [new TextRun({ text: "Amount (K)", bold: true, color: "FFFFFF" })], alignment: AlignmentType.RIGHT })],
-                }),
-              ],
-            }),
-            new TableRow({
-              children: [
-                new TableCell({
-                  children: [new Paragraph({ text: "  \u2022 School Lunch / Meals Fee" })],
-                }),
-                new TableCell({
-                  children: [new Paragraph({ text: `K ${lunchPrice.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-                }),
-              ],
-            }),
-          ],
-        })
-      );
-
-      documentChildren.push(new Paragraph({ text: "", spacing: { after: 150 } }));
-    }
-
-    // Bus Section
-    if (data.busAccepted && busPrice > 0) {
-      documentChildren.push(
-        new Paragraph({
-          children: [new TextRun({ text: "BUS / TRANSPORT CHARGES", bold: true, size: 24, color: "1E3A8A" })],
-          spacing: { after: 150 },
-        }),
-        new Table({
-          width: { size: 100, type: "pct" },
-          rows: [
-            new TableRow({
-              children: [
-                new TableCell({
-                  shading: { fill: "1E3A8A" },
-                  width: { size: 70, type: "pct" },
-                  children: [new Paragraph({ children: [new TextRun({ text: "Bus Service Fee", bold: true, color: "FFFFFF" })] })],
-                }),
-                new TableCell({
-                  shading: { fill: "1E3A8A" },
-                  width: { size: 30, type: "pct" },
-                  children: [new Paragraph({ children: [new TextRun({ text: "Amount (K)", bold: true, color: "FFFFFF" })], alignment: AlignmentType.RIGHT })],
-                }),
-              ],
-            }),
-            new TableRow({
-              children: [
-                new TableCell({
-                  children: [new Paragraph({ text: "  \u2022 Bus Service Fee" })],
-                }),
-                new TableCell({
-                  children: [new Paragraph({ text: `K ${busPrice.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-                }),
-              ],
-            }),
-          ],
-        })
-      );
-
-      documentChildren.push(new Paragraph({ text: "", spacing: { after: 150 } }));
-    }
-
-    // ===================== PAYMENT SUMMARY =====================
+    // ===================== STUDENT / PARENT COPY =====================
     documentChildren.push(
       new Paragraph({
-        children: [new TextRun({ text: "PAYMENT SUMMARY", bold: true, size: 24, color: "1E3A8A" })],
-        spacing: { after: 150 },
-      })
-    );
-
-    // Build payment summary
-    const paymentSummaryRows: TableRow[] = [
-      new TableRow({
         children: [
-          new TableCell({
-            width: { size: 60, type: "pct" },
-            shading: { fill: "E8F4F8" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Total School Fees", bold: true })] })],
-          }),
-          new TableCell({
-            width: { size: 40, type: "pct" },
-            shading: { fill: "E8F4F8" },
-            children: [new Paragraph({ children: [new TextRun({ text: `K ${standardTotalFees.toFixed(2)}`, bold: true })], alignment: AlignmentType.RIGHT })],
-          }),
+          new TextRun({ text: schoolDisplayName, bold: true, size: 26, color: "1E3A8A" }),
         ],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 140, after: 20 },
       }),
-      new TableRow({
+      new Paragraph({
         children: [
-          new TableCell({
-            children: [new Paragraph({ text: "Inventory Amount" })],
-          }),
-          new TableCell({
-            children: [new Paragraph({ text: `K ${inventoryTotal.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-          }),
+          new TextRun({ text: "FEE RECEIPT (STUDENT / PARENT COPY)", bold: true, size: 19, color: "1E3A8A" }),
         ],
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 0, after: 160 },
       }),
-    ];
-
-    if (data.lunchAccepted && lunchPrice > 0) {
-      paymentSummaryRows.push(
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ text: "Lunch / Meals Charges" })],
-            }),
-            new TableCell({
-              children: [new Paragraph({ text: `K ${lunchPrice.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-            }),
-          ],
-        })
-      );
-    }
-
-    if (data.busAccepted && busPrice > 0) {
-      paymentSummaryRows.push(
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [new Paragraph({ text: "Bus / Transport Charges" })],
-            }),
-            new TableCell({
-              children: [new Paragraph({ text: `K ${busPrice.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-            }),
-          ],
-        })
-      );
-    }
-
-    paymentSummaryRows.push(
-      new TableRow({
-        children: [
-          new TableCell({
-            shading: { fill: "FFF3E0" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Grand Total (Current)", bold: true })] })],
-          }),
-          new TableCell({
-            shading: { fill: "FFF3E0" },
-            children: [new Paragraph({ children: [new TextRun({ text: `K ${grandTotal.toFixed(2)}`, bold: true })], alignment: AlignmentType.RIGHT })],
-          }),
-        ],
-      })
-    );
-
-    // Payment history
-    if (data.fees && data.fees.length > 0) {
-      paymentSummaryRows.push(
-        new TableRow({
-          children: [
-            new TableCell({
-              columnSpan: 2,
-              children: [new Paragraph({ children: [new TextRun({ text: "PAYMENT HISTORY", bold: true, size: 20 })] })],
-              shading: { fill: "D4E6F1" },
-            }),
-          ],
-        })
-      );
-
-      data.fees.forEach((fee: any, index: number) => {
-        const num = index + 1;
-        const suffix = num === 1 ? 'st' : num === 2 ? 'nd' : num === 3 ? 'rd' : 'th';
-        paymentSummaryRows.push(
-          new TableRow({
-            children: [
-              new TableCell({
-                children: [new Paragraph({ text: `  Paid ${num}${suffix} Installment` })],
-              }),
-              new TableCell({
-                children: [new Paragraph({ text: `K ${fee.amount.toFixed(2)}`, alignment: AlignmentType.RIGHT })],
-              }),
-            ],
-          })
-        );
-      });
-    }
-
-    paymentSummaryRows.push(
-      new TableRow({
-        children: [
-          new TableCell({
-            shading: { fill: "E8F5E9" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Total Amount Paid", bold: true })] })],
-          }),
-          new TableCell({
-            shading: { fill: "E8F5E9" },
-            children: [new Paragraph({ children: [new TextRun({ text: `K ${totalFeesPaid.toFixed(2)}`, bold: true })], alignment: AlignmentType.RIGHT })],
-          }),
-        ],
-      }),
-      new TableRow({
-        children: [
-          new TableCell({
-            shading: { fill: "FFEBEE" },
-            children: [new Paragraph({ children: [new TextRun({ text: "Remaining Balance", bold: true, color: "C62828" })] })],
-          }),
-          new TableCell({
-            shading: { fill: "FFEBEE" },
-            children: [new Paragraph({ children: [new TextRun({ text: `K ${remainingBalance.toFixed(2)}`, bold: true, color: "C62828" })], alignment: AlignmentType.RIGHT })],
-          }),
-        ],
-      })
-    );
-
-    documentChildren.push(
       new Table({
         width: { size: 100, type: "pct" },
-        rows: paymentSummaryRows,
-      })
-    );
-
-    documentChildren.push(new Paragraph({ text: "", spacing: { after: 250 } }));
-
-    // ===================== FOOTER =====================
-    documentChildren.push(
-      new Paragraph({
-        text: "═".repeat(85),
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
+        margins: cellPadding,
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: 16, type: "pct" },
+                shading: { fill: "E8F4F8" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Student Name", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+              new TableCell({
+                width: { size: 34, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: name || "N/A", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+              new TableCell({
+                width: { size: 12, type: "pct" },
+                shading: { fill: "E8F4F8" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Class", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+              new TableCell({
+                width: { size: 16, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: data.standard || "N/A", size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+              new TableCell({
+                width: { size: 10, type: "pct" },
+                shading: { fill: "E8F4F8" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: "Date", bold: true, size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+              new TableCell({
+                width: { size: 12, type: "pct" },
+                margins: cellPadding,
+                children: [new Paragraph({ children: [new TextRun({ text: formattedDate, size: 18 })], spacing: { before: 12, after: 12 } })],
+              }),
+            ],
+          }),
+        ],
       }),
       new Paragraph({
-        children: [new TextRun({ text: "Authorized Signature", italics: true })],
-        spacing: { after: 50 },
+        children: [new TextRun({ text: "PAYMENT SUMMARY", bold: true, size: 20, color: "1E3A8A" })],
+        spacing: { before: 200, after: 160 },
       }),
-      new Paragraph({
-        text: "",
-        spacing: { after: 100 },
+      buildPaymentSummaryTable(),
+      new Table({
+        width: { size: 100, type: "pct" },
+        margins: { top: 240, bottom: 120, left: 60, right: 60 },
+        borders: {
+          top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+          insideVertical: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+        },
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: 50, type: "pct" },
+                margins: { top: 240, bottom: 120, left: 60, right: 60 },
+                borders: {
+                  top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                },
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: "Authorized Signature: ____________________", italics: true, size: 18 })],
+                    spacing: { before: 160, after: 80 },
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: 50, type: "pct" },
+                margins: { top: 240, bottom: 120, left: 60, right: 60 },
+                borders: {
+                  top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                  right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                },
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: "[ School Stamp Area ]", italics: true, size: 18, color: "555555" })],
+                    alignment: AlignmentType.RIGHT,
+                    spacing: { before: 160, after: 80 },
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
       }),
-      new Paragraph({
-        children: [new TextRun({ text: "_____________________", italics: true })],
-        spacing: { after: 50 },
-      }),
-      new Paragraph({
-        text: "[School Stamp Area]",
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
-      }),
-      new Paragraph({
-        children: [new TextRun({ text: "This is a system-generated receipt. No signature required.", italics: true, size: 18, color: "666666" })],
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 50 },
-      })
     );
 
     const doc = new Document({
       sections: [
         {
+          properties: {
+            page: {
+              margin: {
+                top: 400,
+                right: 500,
+                bottom: 400,
+                left: 500,
+              },
+            },
+          },
           children: documentChildren,
         },
       ],
@@ -648,28 +565,10 @@ const FeeReicpts = ({ id , name } : {id : number ,name : any}) => {
   };
  
 
-  const handlechange = (e: React.ChangeEvent<HTMLSelectElement>)=>{
-      setTitle(e.target.value);
-  }
-
   return (
     <div>
       <h2>Get Receipt</h2>
-      <div>
-            <label>Installment Type</label>
-            <select
-              name="title"
-              value={title}
-              onChange={handlechange}
-            >
-              <option value="">Select installment type</option>
-              <option value="">Select installment type</option>
-                {installmentArray.map((ele,id)=>(
-                  <option key={id} value={ele}>{ele}</option>
-              ))}
-            </select>
-      </div>
-      <button onClick={fetchFeeData}>Generate Receipt</button>
+      <button onClick={fetchFeeData} style={{ marginTop: '8px' }}>Generate Receipt</button>
     </div>
   );
 };

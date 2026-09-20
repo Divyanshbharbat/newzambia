@@ -16,7 +16,7 @@ export const handleInstitutionLogo = atom({
 
 export const sessionYear = atom({
   key: "session",
-  default: ["2026-2027"],
+  default: ["2026"],
 });
 
 export const standardList = atom<string[]>({
@@ -26,6 +26,6 @@ export const standardList = atom<string[]>({
 
 export const installmentArr = atom<string[]>({
   key: "installments",
-  default: [],
+  default: ['1st', '2nd', '3rd', '4th', '5th'],
 });
 

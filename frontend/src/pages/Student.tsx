@@ -246,7 +246,7 @@ const Student: React.FC = () => {
         .map(([key, val]) => ({ inventoryId: parseInt(key), size: val.size, quantity: val.quantity }))
         .filter((s) => s.quantity && s.quantity > 0);
 
-      const currentSession = localStorage.getItem("selectedSession") || "2026-2027";
+      const currentSession = localStorage.getItem("selectedSession") || "2026";
       // Fees are NOT paid automatically upon registration; installments are recorded manually in Fees section
       await createStudent(({ 
         ...student, 

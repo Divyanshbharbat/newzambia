@@ -69,17 +69,17 @@ app.use(async (req, res, next) => {
                 where: { college: req.college },
                 orderBy: { year: 'desc' }
             });
-            session = latestSession ? latestSession.year : '2026-2027';
+            session = latestSession ? latestSession.year : '2026';
             if (latestSession) {
                 sessionManager.setSession(session);
             }
         }
 
-        req.session = session || '2026-2027';
+        req.session = session || '2026';
         next();
     } catch (error) {
         console.error("Session middleware error:", error);
-        req.session = '2026-2027';
+        req.session = '2026';
         req.college = 'svpcet';
         next();
     }
@@ -125,7 +125,38 @@ app.get('/getSessions', async (req, res) => {
         console.error("Error fetching session: ", error.message);
         return res.status(500).json({ error: 'An error occurred while fetching sessions', details: error.message });
     }
-})
+});
+
+app.delete('/session/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const sessionId = parseInt(id);
+        if (isNaN(sessionId)) {
+            return res.status(400).json({ error: 'Invalid session ID' });
+        }
+
+        const sessionToDelete = await prisma.session.findFirst({
+            where: { id: sessionId, college: req.college }
+        });
+
+        if (!sessionToDelete) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        await prisma.control.deleteMany({
+            where: { sessionId: sessionId }
+        });
+
+        await prisma.session.delete({
+            where: { id: sessionId }
+        });
+
+        return res.status(200).json({ message: 'Session deleted successfully' });
+    } catch (error) {
+        console.error("Error deleting session:", error);
+        return res.status(500).json({ error: 'An error occurred while deleting the session' });
+    }
+});
 app.get('/setSession', (req, res) => {
     try {
         const { year } = req.query;
@@ -235,13 +266,13 @@ async function checkAndInitializeDatabase() {
             await prisma.session.upsert({
                 where: {
                     year_college: {
-                        year: '2026-2027',
+                        year: '2026',
                         college: collegeName
                     }
                 },
                 update: {},
                 create: {
-                    year: '2026-2027',
+                    year: '2026',
                     college: collegeName
                 }
             });

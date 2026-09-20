@@ -5,6 +5,10 @@ import { getAllSessions, getAllStandards } from "../apis/api";
 
 const getNextSession = (sessionStr: string): string => {
   if (!sessionStr) return "";
+  if (!sessionStr.includes("-")) {
+    const yr = parseInt(sessionStr);
+    if (!isNaN(yr)) return String(yr + 1);
+  }
   const parts = sessionStr.split("-");
   if (parts.length === 2) {
     const s = parseInt(parts[0]);
@@ -31,10 +35,10 @@ const getNextDivision = (divStr: string, availableDivisions: string[]): string =
 
 const PromoteStudent: React.FC = () => {
   const [fromSession, setFromSession] = useState<string>(
-    localStorage.getItem("selectedSession") || "2026-2027"
+    localStorage.getItem("selectedSession") || "2026"
   );
   const [toSession, setToSession] = useState<string>(
-    getNextSession(localStorage.getItem("selectedSession") || "2026-2027")
+    getNextSession(localStorage.getItem("selectedSession") || "2026")
   );
 
   const [sessions, setSessions] = useState<any[]>([]);
@@ -113,7 +117,7 @@ const PromoteStudent: React.FC = () => {
 
   // Compute available options for To Session dropdown
   const availableToSessions = useMemo(() => {
-    const defaultSessions = ['2025-2026', '2026-2027', '2027-2028', '2028-2029', '2029-2030'];
+    const defaultSessions = ['2025', '2026', '2027', '2028', '2029', '2030'];
     const fetchedYears = sessions.map(s => s.year);
     const nextSess = getNextSession(fromSession);
     const combined = Array.from(new Set([...fetchedYears, nextSess, ...defaultSessions])).filter(Boolean);

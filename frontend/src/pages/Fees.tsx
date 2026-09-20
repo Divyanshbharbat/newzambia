@@ -51,7 +51,9 @@ const Fees: React.FC = () => {
     amountDate: "",
     admissionDate: ""
   });
-  const [installmentArray] = useState<string[]>(useRecoilValue(installmentArr));
+  const defaultInstallments = ['1st', '2nd', '3rd', '4th', '5th'];
+  const recoilInstallments = useRecoilValue(installmentArr);
+  const [installmentArray] = useState<string[]>(recoilInstallments && recoilInstallments.length > 0 ? recoilInstallments : defaultInstallments);
   const [availableInventory, setAvailableInventory] = useState<any[]>([]);
   const [selectedInventoryItems, setSelectedInventoryItems] = useState<Record<number, { selected: boolean; quantity: number; price?: number; id?: number }>>({});
   const [standardBaseFee, setStandardBaseFee] = useState<number>(0);
@@ -106,7 +108,7 @@ const Fees: React.FC = () => {
               ? (qty > 0 ? si.totalPrice / qty : si.totalPrice)
               : (si.inventory?.price || 0);
             initialMap[si.inventoryId] = {
-              selected: true,
+              selected: false,
               quantity: qty,
               price: unitP,
               id: si.id
@@ -875,7 +877,7 @@ const Fees: React.FC = () => {
                 disabled={remainingFees <= 0}
               >
                 <option value="">Select installment type</option>
-                {installmentArray.map((ele,id)=>(
+                {(installmentArray.length > 0 ? installmentArray : defaultInstallments).map((ele, id) => (
                   <option key={id} value={ele}>{ele}</option>
                 ))}
               </select>

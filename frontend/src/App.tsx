@@ -19,8 +19,8 @@ import PromoteStudent from "./pages/PromoteStudent";
 import Chatbot from "./components/Chatbot";
 import Login from "./pages/Login";
 import { useRecoilValue, useSetRecoilState } from "recoil";
-import { handleInstitutionLogo, handleInstitutionName, installmentArr, standardList } from "./store/store";
-import { fetchInstallments, getAllStandards, fetchColleges, getInstitutionNameAndLogo, getAllSessions } from "./apis/api";
+import { handleInstitutionLogo, handleInstitutionName, standardList } from "./store/store";
+import { getAllStandards, fetchColleges, getInstitutionNameAndLogo, getAllSessions } from "./apis/api";
 import { getCredentials } from "./apis/api";
 import axios from "axios";
 import { School } from "lucide-react";
@@ -34,7 +34,6 @@ interface Auth {
 const App: React.FC = () => {
   const navigate = useNavigate();
   const [auth, setAuth] = useState<Auth | null>(null);
-  const setInstallments = useSetRecoilState(installmentArr);
   const setStandards = useSetRecoilState(standardList);
   const [isLoading, setIsLoading] = useState(true);
   const [isNavbarOpen, setIsNavbarOpen] = useState(true);
@@ -126,18 +125,6 @@ const App: React.FC = () => {
       setIsLoading(false);
     }
 
-    // populate global installments into recoil store
-    (async () => {
-      try {
-        const data = await fetchInstallments();
-        if (Array.isArray(data)) {
-          const mapped = data.map((d: any) => (d.installments ? d.installments : d));
-          setInstallments(mapped);
-        }
-      } catch (err) {
-        console.error("Error fetching installments on app load:", err);
-      }
-    })();
     // populate global standards into recoil store
     (async () => {
       try {

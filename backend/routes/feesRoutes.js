@@ -133,65 +133,8 @@ router.get("/fees/details", async (req, res) => {
         },
       });
 
-      // Fallback lookup if not found with current session filter
-      if (!result && (standard || roll_no || name)) {
-        const fallbackWhere = { college: req.college };
-        if (standard && standard.trim()) fallbackWhere.standard = standard.trim();
-        if (roll_no && !isNaN(parseInt(roll_no))) fallbackWhere.rollNo = parseInt(roll_no);
-        if (name && name.trim()) {
-          fallbackWhere.fullName = { contains: name.trim(), mode: 'insensitive' };
-        }
-
-        result = await prisma.student.findFirst({
-          where: fallbackWhere,
-          orderBy: { id: 'desc' },
-          select: {
-            id: true,
-            fullName: true,
-            rollNo: true,
-            standard: true,
-            session: true,
-            scholarshipApplied: true,
-            remark: true,
-            lunchAccepted: true,
-            lunchPrice: true,
-            busAccepted: true,
-            busStationId: true,
-            busPrice: true,
-            busStation: {
-              select: {
-                id: true,
-                stationName: true,
-                price: true,
-              }
-            },
-            fees: {
-              select: {
-                title: true,
-                amount: true,
-                amountDate: true,
-                admissionDate: true,
-              },
-            },
-            studentInventory: {
-              select: {
-                inventory: {
-                  select: {
-                    itemName: true,
-                    gender: true,
-                    price: true,
-                  },
-                },
-                quantityPurchased: true,
-                totalPrice: true,
-              },
-            },
-          },
-        });
-      }
-
       if (!result) {
-        return res.status(404).json({ error: "Student not found" });
+        return res.status(404).json({ error: "Student not found in this academic session" });
       }
 
       let standardTotalFees = 0;
@@ -240,8 +183,8 @@ router.get("/fees/details", async (req, res) => {
   router.get("/feetable", async(req,res)=>{
     const { standard, id } = req.query;
     try{
-      // allow lookup by `id` or by `standard` when `id` is not provided
-      const whereClause = id ? { id: parseInt(id) } : (standard ? { standard: standard.toString() } : {});
+      // allow lookup by `id` or by `standard` within current session
+      const whereClause = id ? { id: parseInt(id) } : (standard ? { standard: standard.toString(), ...(req.session ? { session: req.session } : {}) } : {});
 
       const student = await prisma.student.findFirst({
         where: { ...whereClause, college: req.college },

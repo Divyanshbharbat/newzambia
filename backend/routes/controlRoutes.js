@@ -157,11 +157,20 @@ router.put('/control/standard/:id', async (req, res) => {
     }
 
     const newStdName = std && std.trim() ? std.trim() : existingStd.std;
+    const targetCollege = existingStd.college || req.college;
 
     // If division name changed, update student records too
     if (newStdName !== existingStd.std) {
       await prisma.student.updateMany({
-        where: { standard: existingStd.std, college: req.college },
+        where: { standard: existingStd.std, college: targetCollege },
+        data: { standard: newStdName }
+      });
+      await prisma.attendance.updateMany({
+        where: { standard: existingStd.std, college: targetCollege },
+        data: { standard: newStdName }
+      });
+      await prisma.hostel.updateMany({
+        where: { standard: existingStd.std, college: targetCollege },
         data: { standard: newStdName }
       });
     }
@@ -425,12 +434,16 @@ router.post("/promotion", async (req, res) => {
       if (currSessionIdx !== -1 && currSessionIdx < sessionYears.length - 1) {
         nextSession = sessionYears[currSessionIdx + 1];
       } else {
-        const parts = session ? session.split('-') : [];
-        if (parts.length === 2) {
-          const start = parseInt(parts[0]);
-          const end = parseInt(parts[1]);
-          if (!isNaN(start) && !isNaN(end)) {
-            nextSession = `${start + 1}-${end + 1}`;
+        if (session && !session.includes('-') && !isNaN(parseInt(session))) {
+          nextSession = String(parseInt(session) + 1);
+        } else {
+          const parts = session ? session.split('-') : [];
+          if (parts.length === 2) {
+            const start = parseInt(parts[0]);
+            const end = parseInt(parts[1]);
+            if (!isNaN(start) && !isNaN(end)) {
+              nextSession = `${start + 1}-${end + 1}`;
+            }
           }
         }
       }
@@ -673,6 +686,37 @@ router.post("/promotion", async (req, res) => {
     } catch (error) {
       console.error('Error fetching sessions:', error);
       res.status(500).json({ error: 'Failed to fetch sessions' });
+    }
+  });
+
+  router.delete("/session/:id", async (req, res) => {
+    const { id } = req.params;
+    try {
+      const sessionId = parseInt(id);
+      if (isNaN(sessionId)) {
+        return res.status(400).json({ error: 'Invalid session ID' });
+      }
+
+      const sessionToDelete = await prisma.session.findFirst({
+        where: { id: sessionId, college: req.college }
+      });
+
+      if (!sessionToDelete) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      await prisma.control.deleteMany({
+        where: { sessionId: sessionId }
+      });
+
+      await prisma.session.delete({
+        where: { id: sessionId }
+      });
+
+      res.status(200).json({ message: 'Session deleted successfully' });
+    } catch (error) {
+      console.error('Error deleting session:', error);
+      res.status(500).json({ error: 'Failed to delete session' });
     }
   });
   

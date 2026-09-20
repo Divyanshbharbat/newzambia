@@ -569,7 +569,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
       const remark = colMap.remark && getVal(row, colMap.remark) ? String(getVal(row, colMap.remark)).trim() : null;
       const sessionRaw = colMap.session ? getVal(row, colMap.session) : null;
-      const session = sessionRaw ? String(sessionRaw).trim() : (req.session || '2026-2027');
+      const session = sessionRaw ? String(sessionRaw).trim() : (req.session || '2026');
 
       students.push({
         fullName,

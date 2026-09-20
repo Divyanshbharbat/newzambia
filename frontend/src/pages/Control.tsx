@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react';
 import {
   addControlValues, addStandard, currentSession, uploadSchoolLogo,
   getAllStandards, updateStandard, deleteStandard, getSubjectsForStandard,
-  deleteSubject, addSubjectsWithInstallment, getAllSessions, fetchInstallments,
+  deleteSubject, addSubjectsWithInstallment, getAllSessions, deleteSession,
   fetchControlConfig, fetchCategories, addCategory, deleteCategory,
   fetchUsers, addUser, deleteUser, updateUser,
   fetchColleges, addCollege, deleteCollege,
   fetchBusStations, createBusStation, updateBusStation, deleteBusStation
 } from '../apis/api';
 import { useSetRecoilState } from 'recoil';
-import { installmentArr, standardList } from '../store/store';
+import { standardList } from '../store/store';
 import axios from 'axios';
 import { AxiosError } from 'axios';
 import '../styles/Control.css';
@@ -87,13 +87,8 @@ const Control: React.FC = () => {
   const [schoolAddress, setSchoolAddress] = useState<string>('');
   const [totalFee, setTotalFee] = useState<number>(0);
   const [lunchFee, setLunchFee] = useState<number>(0);
-  const [installment, setInstallment] = useState<string>('');
   const [url, setUrl] = useState<string>('');
-  const [newinstallment, setNewinstallment] = useState<boolean>(false);
-  const [uinstallment, setUinstallment] = useState<string>('');
-  const [uinstallment2, setUinstallment2] = useState<string>('');
   const [input1, setInput1] = useState<string>('');
-  const [input2, setInput2] = useState<string>('');
 
   // CRUD States
   const [standards, setStandards] = useState<Standard[]>([]);
@@ -105,16 +100,8 @@ const Control: React.FC = () => {
   useEffect(() => {
     if (isLoadingConfig) console.log("Loading config...");
   }, [isLoadingConfig]);
-  const [installments, setInstallments] = useState<Installment[]>([]);
 
-  const setGlobalInstallments = useSetRecoilState(installmentArr);
   const setGlobalStandards = useSetRecoilState(standardList);
-
-  // Keep a minimal reference to `installments` so the compiler knows it's used
-  useEffect(() => {
-    // noop reference to avoid unused variable error
-    void installments;
-  }, [installments]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [showManageStandards, setShowManageStandards] = useState<boolean>(false);
   const [showManageSubjects, setShowManageSubjects] = useState<boolean>(false);
@@ -217,7 +204,6 @@ const Control: React.FC = () => {
   useEffect(() => {
     loadAllStandards();
     loadSessions();
-    loadInstallments();
     loadCategories();
     loadUsers();
     loadColleges();
@@ -307,20 +293,6 @@ const Control: React.FC = () => {
     fetchConfig();
   }, [selectedSessionForConfig]);
 
-  const loadInstallments = async () => {
-    try {
-      const data = await fetchInstallments();
-      setInstallments(data || []);
-      // also update global recoil atom for other pages
-      if (Array.isArray(data)) {
-        const mapped = data.map((d: any) => (d.installments ? d.installments : d));
-        setGlobalInstallments(mapped);
-      }
-    } catch (error) {
-      console.error('Error loading installments:', error);
-    }
-  };
-
   const loadAllStandards = async () => {
     try {
       const data = await getAllStandards();
@@ -404,17 +376,27 @@ const Control: React.FC = () => {
   const handleUpdateStandard = async (std: Standard) => {
     try {
       if (!std.id) throw new Error("Standard ID missing");
+      const nameToUpdate = (editedStdName || Standard || '').trim();
+      if (!nameToUpdate) {
+        alert("Division name is required");
+        return;
+      }
+      const feesToUpdate = editedTotalFees !== undefined && !isNaN(editedTotalFees) ? editedTotalFees : StandardTotalFees;
+
       await updateStandard(std.id, {
-        std: editedStdName,
-        totalFees: editedTotalFees,
+        std: nameToUpdate,
+        totalFees: Number(feesToUpdate || 0),
         category: editedCategory || std.category || 'General'
       });
       alert('Division updated successfully');
       setEditingStandard(null);
+      setStandard('');
+      setStandardTotalFees(0);
       loadAllStandards();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating standard:', error);
-      alert('Failed to update division');
+      const msg = error?.error || error?.details || error?.message || 'Failed to update division';
+      alert(`Failed to update division: ${msg}`);
     }
   };
 
@@ -526,46 +508,6 @@ const Control: React.FC = () => {
       console.error('Control update error:', error);
       const errMsg = error.response?.data?.error || error.response?.data?.errorMsg || error.message || 'Something went wrong';
       setConfigStatus({ type: 'error', message: `Failed to update: ${errMsg}` });
-    }
-  };
-
-  const handleInstallment = async () => {
-    try {
-      if (!installment.trim()) {
-        alert('Please enter installment name');
-        return;
-      }
-      await axios.post(`http://${window.location.hostname}:5000/handleInstallments`, {
-        installments: installment,
-      });
-      alert('Added Successfully');
-      setInstallment('');
-      loadInstallments();
-    } catch (err) {
-      alert('Already exist');
-    }
-  };
-
-  const updateInstallment = async () => {
-    try {
-      if (!uinstallment.trim() || !uinstallment2.trim()) {
-        alert('Please fill both fields');
-        return;
-      }
-      const res = await axios.post(`http://${window.location.hostname}:5000/updateinstallment`, {
-        uinstallment,
-        uinstallment2,
-      });
-      if (res) {
-        alert('Installment Updated Successfully');
-        setUinstallment('');
-        setUinstallment2('');
-        setNewinstallment(false);
-        loadInstallments();
-      }
-    } catch (err) {
-      console.log(err);
-      alert('Failed to update installment');
     }
   };
 
@@ -705,18 +647,17 @@ const Control: React.FC = () => {
 
   const handleAddSession = async () => {
     try {
-      if (input1 && input2) {
-        const newSession = input1 + '-' + input2;
+      const newSession = input1.trim();
+      if (newSession) {
         const response = await currentSession(newSession);
 
         if (response.status === 200) {
           alert('Session Added Successfully');
           setInput1('');
-          setInput2('');
           loadSessions();
         }
       } else {
-        alert('Both start year and end year are required.');
+        alert('Session year is required (e.g. 2026).');
       }
     } catch (error) {
       if (axios.isAxiosError(error) && error.response) {
@@ -731,6 +672,22 @@ const Control: React.FC = () => {
       } else {
         console.error('Error:', error);
         alert('An error occurred. Please check the console for details.');
+      }
+    }
+  };
+
+  const handleDeleteSession = async (id: number, year: string) => {
+    if (window.confirm(`Are you sure you want to delete session "${year}"?`)) {
+      try {
+        await deleteSession(id);
+        alert('Session deleted successfully');
+        if (localStorage.getItem('selectedSession') === year) {
+          localStorage.removeItem('selectedSession');
+        }
+        loadSessions();
+      } catch (error: any) {
+        console.error('Error deleting session:', error);
+        alert(error?.error || error?.message || 'Failed to delete session');
       }
     }
   };
@@ -791,9 +748,20 @@ const Control: React.FC = () => {
           ))}
         </select>
         
-        <button className="btn" onClick={handleSubmitStandard}>
-          Add Division + Fees
-        </button>
+        {editingStandard ? (
+          <div style={{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+            <button className="btn" style={{ backgroundColor: '#28a745' }} onClick={() => handleUpdateStandard(editingStandard)}>
+              Update Division
+            </button>
+            <button className="btn" style={{ backgroundColor: '#64748b' }} onClick={() => { setEditingStandard(null); setStandard(''); setStandardTotalFees(0); }}>
+              Cancel Edit
+            </button>
+          </div>
+        ) : (
+          <button className="btn" onClick={handleSubmitStandard}>
+            Add Division + Fees
+          </button>
+        )}
         <button className="btn manage-btn" onClick={() => { setShowManageStandards(!showManageStandards); if (!showManageStandards) loadAllStandards(); }}>
           {showManageStandards ? 'Hide' : 'Manage'} Divisions & Fees
         </button>
@@ -810,32 +778,88 @@ const Control: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {standards.map(std => (
-                  <tr key={std.id}>
-                    <td><strong>{std.std}</strong></td>
-                    <td>K{std.totalFees || 0}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          className="btn-edit"
-                          onClick={() => {
-                            setEditingStandard(std);
-                            setEditedStdName(std.std);
-                            setEditedTotalFees(std.totalFees);
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn-delete"
-                          onClick={() => handleDeleteStandard(std.id, std.std)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {standards.map(std => {
+                  const isEditing = editingStandard?.id === std.id;
+                  return (
+                    <tr key={std.id} style={isEditing ? { backgroundColor: '#fef3c7' } : {}}>
+                      <td>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editedStdName}
+                            onChange={(e) => { setEditedStdName(e.target.value); setStandard(e.target.value); }}
+                            placeholder="Division Name"
+                            style={{ width: '100%', maxWidth: '160px', padding: '6px 10px', borderRadius: '4px', border: '2px solid #AF1763', fontWeight: 'bold' }}
+                            autoFocus
+                          />
+                        ) : (
+                          <strong>{std.std}</strong>
+                        )}
+                      </td>
+                      <td>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontWeight: 600 }}>K</span>
+                            <input
+                              type="number"
+                              value={editedTotalFees}
+                              onChange={(e) => { setEditedTotalFees(Number(e.target.value)); setStandardTotalFees(Number(e.target.value)); }}
+                              placeholder="Total Fees"
+                              style={{ width: '100%', maxWidth: '140px', padding: '6px 10px', borderRadius: '4px', border: '2px solid #AF1763' }}
+                            />
+                          </div>
+                        ) : (
+                          `K${std.totalFees || 0}`
+                        )}
+                      </td>
+                      <td>
+                        {isEditing ? (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn"
+                              style={{ backgroundColor: '#28a745', padding: '6px 14px', fontSize: '0.9em' }}
+                              onClick={() => handleUpdateStandard(std)}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="btn"
+                              style={{ backgroundColor: '#64748b', padding: '6px 14px', fontSize: '0.9em' }}
+                              onClick={() => {
+                                setEditingStandard(null);
+                                setStandard('');
+                                setStandardTotalFees(0);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn-edit"
+                              onClick={() => {
+                                setEditingStandard(std);
+                                setEditedStdName(std.std);
+                                setEditedTotalFees(std.totalFees || 0);
+                                setStandard(std.std);
+                                setStandardTotalFees(std.totalFees || 0);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn-delete"
+                              onClick={() => handleDeleteStandard(std.id, std.std)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
@@ -1021,6 +1045,13 @@ const Control: React.FC = () => {
           value={InstitutionName}
           onChange={(e) => setInstitutionName(e.target.value)}
         />
+        <label>Set School Address:</label>
+        <input
+          type="text"
+          placeholder="Enter school address"
+          value={schoolAddress}
+          onChange={(e) => setSchoolAddress(e.target.value)}
+        />
         <label>Set School Logo</label>
         <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e)} />
         {url && (
@@ -1028,42 +1059,6 @@ const Control: React.FC = () => {
             <img src={url.startsWith('http') ? url.replace("localhost", window.location.hostname) : url} alt="School Logo Preview" style={{ height: "60px", objectFit: "contain", borderRadius: "5px" }} />
           </div>
         )}
-        <label>Set Hostel Name:</label>
-        <input
-          type="text"
-          placeholder="Enter Hostel Name"
-          value={hostelName}
-          onChange={(e) => setHostelName(e.target.value)}
-        />
-        <label>Set School Address</label>
-        <input
-          type="text"
-          placeholder="Enter School Address"
-          value={schoolAddress}
-          onChange={(e) => setSchoolAddress(e.target.value)}
-        />
-        <label>Set Hostel Beds:</label>
-        <input
-          type="number"
-          placeholder="Enter Number of Hostel Beds"
-          value={num_of_beds}
-          onChange={(e) => setNum_of_beds(Number(e.target.value))}
-        />
-        <label>Set Total Fees</label>
-        <input
-          type="number"
-          placeholder="Enter Total Fees"
-          value={totalFee}
-          onChange={(e) => setTotalFee(Number(e.target.value))}
-        />
-        <label>Set Lunch Fee (Monthly)</label>
-        <input
-          type="number"
-          placeholder="Enter Lunch Fee"
-          value={lunchFee}
-          onChange={(e) => setLunchFee(Number(e.target.value))}
-        />
-
         {isLoadingConfig && <p style={{ color: '#3b82f6', fontSize: '14px' }}>Loading configuration data...</p>}
         
         {configStatus && (
@@ -1087,65 +1082,15 @@ const Control: React.FC = () => {
 
       <br />
 
-      {/* Add Installments Section */}
-      <div className="control-section">
-        <h2>Add Installments</h2>
-        <label>Installment Name:</label>
-        <input
-          type="text"
-          placeholder="Enter Installment Name"
-          value={installment}
-          onChange={(e) => setInstallment(e.target.value)}
-        />
-        <label>Session:</label>
-        <select defaultValue="">
-          <option value="">Current Session</option>
-          {sessions.map(s => (
-            <option key={s.id} value={s.year}>{s.year}</option>
-          ))}
-        </select>
-        <div className="installment-button">
-          <button onClick={handleInstallment}>Submit Installment</button>
-          <button style={{ marginLeft: '40px' }} onClick={() => setNewinstallment(!newinstallment)}>
-            Edit Installment
-          </button>
-          {newinstallment ? (
-            <div style={{ marginTop: '30px' }}>
-              <input
-                type="text"
-                placeholder="Previous installment"
-                value={uinstallment}
-                onChange={(e) => setUinstallment(e.target.value)}
-              />
-              <input
-                type="text"
-                placeholder="New installment"
-                value={uinstallment2}
-                onChange={(e) => setUinstallment2(e.target.value)}
-              />
-              <button onClick={updateInstallment}>Update Installment</button>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <br />
-
       {/* Set Sessions Section */}
       <div className="control-section">
         <h2>Set Sessions</h2>
         <label>Add Session:</label>
         <input
           type="text"
-          placeholder="Enter start year"
+          placeholder="Enter session year (e.g. 2026)"
           value={input1}
           onChange={(e) => setInput1(e.target.value)}
-        />
-        <input
-          type="text"
-          placeholder="Enter end year"
-          value={input2}
-          onChange={(e) => setInput2(e.target.value)}
         />
         <button onClick={handleAddSession}>Add Session</button>
 
@@ -1162,6 +1107,7 @@ const Control: React.FC = () => {
                   <tr>
                     <th>Session Year</th>
                     <th>Created Date</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1169,6 +1115,14 @@ const Control: React.FC = () => {
                     <tr key={session.id}>
                       <td><strong>{session.year}</strong></td>
                       <td>{new Date(session.createdAt).toLocaleDateString()}</td>
+                      <td>
+                        <button
+                          className="btn-delete"
+                          onClick={() => handleDeleteSession(session.id, session.year)}
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

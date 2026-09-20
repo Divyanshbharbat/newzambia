@@ -46,7 +46,7 @@ const Navbar: React.FC<NavbarProps> = ({ auth, logout, onSessionChange }) => {
         const yearsArr = Array.isArray(data) ? data.map((s: any) => s.year || s) : [];
         setYears(yearsArr);
         // Fetch school name and logo for saved session
-        const sessionToUse = saved || yearsArr[0] || "2026-2027";
+        const sessionToUse = saved || yearsArr[0] || "2026";
         if (sessionToUse) {
           if (!saved) {
             localStorage.setItem("selectedSession", sessionToUse);
@@ -116,7 +116,7 @@ const Navbar: React.FC<NavbarProps> = ({ auth, logout, onSessionChange }) => {
           >
             <option value="">Select Session</option>
             {years.length==0 ? (
-              <option value="2026-2027">2026-2027</option>
+              <option value="2026">2026</option>
             ) :years.map((ele, key) => (
               <option key={key} value={ele}>
                 {ele}

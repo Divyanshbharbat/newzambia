@@ -382,6 +382,7 @@ export const addControlValues = async (data: any) => {
     schoolLogo: data.url,
     lunchFee: data.lunchFee,
     year: data.year,
+    college: data.college,
   };
 
   const res = await axios.post(`${root}/changesFromControlPanel`, payload, {
@@ -700,10 +701,11 @@ export const getAllStandards = async () => {
 
 export const updateStandard = async (id: number, data: any) => {
   try {
-    const response = await axios.put(`http://${window.location.hostname}:5000/control/standard/${id}`, data);
+    const response = await axios.put(`${root}/control/standard/${id}`, data);
     return response.data;
-  } catch (error) {
-    throw new Error("Error updating standard");
+  } catch (error: any) {
+    console.error("Error updating standard:", error);
+    throw error.response?.data || error;
   }
 };
 
@@ -762,6 +764,15 @@ export const addSession = async (year: string) => {
     return response.data;
   } catch (error) {
     throw new Error("Error adding session");
+  }
+};
+
+export const deleteSession = async (id: number) => {
+  try {
+    const response = await axios.delete(`${root}/session/${id}`);
+    return response.data;
+  } catch (error: any) {
+    throw error.response?.data || new Error("Error deleting session");
   }
 };
 // Marks Management - Bulk Operations

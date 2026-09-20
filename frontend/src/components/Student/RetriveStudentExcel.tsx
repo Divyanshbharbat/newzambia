@@ -4,7 +4,7 @@ import { downloadStudentsExcel, downloadStudentsCSV } from '../../apis/api';
 const StudentsInfoDownload: React.FC = () => {
   const downloadExcel = async () => {
     try {
-      const currentSession = localStorage.getItem("selectedSession") || "2026-2027";
+      const currentSession = localStorage.getItem("selectedSession") || "2026";
       const currentCollege = localStorage.getItem("userCollege") || "svpcet";
       const response = await downloadStudentsExcel(currentSession, currentCollege);
       const url = window.URL.createObjectURL(new Blob([response.data]));
@@ -22,7 +22,7 @@ const StudentsInfoDownload: React.FC = () => {
 
   const downloadCSV = async () => {
     try {
-      const currentSession = localStorage.getItem("selectedSession") || "2026-2027";
+      const currentSession = localStorage.getItem("selectedSession") || "2026";
       const currentCollege = localStorage.getItem("userCollege") || "svpcet";
       const response = await downloadStudentsCSV(currentSession, currentCollege);
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'text/csv' }));

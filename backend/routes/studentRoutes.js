@@ -84,7 +84,7 @@ router.post("/students", async (req, res) => {
         return res.status(400).json({ error: "Standard / Class is required." });
     }
 
-    const session = bodySession || req.headers['x-session'] || req.query.session || req.session || "2026-2027";
+    const session = bodySession || req.headers['x-session'] || req.query.session || req.session || "2026";
     const college = req.college || "svpcet";
     const std = standard.trim();
 
@@ -470,18 +470,14 @@ router.get("/students/rollNo", async (req, res) => {
 // Get student by rollNo only (for TC auto-fill)
 router.get("/students/byRollNo/:rollNo", async (req, res) => {
     const { rollNo } = req.params;
-    // const session = req.session;
-
-    // if (!session) {
-    //     return res.status(400).json({ error: "Session not set. Please set a session first." });
-    // }
+    const session = req.session;
 
     try {
         const student = await prisma.student.findFirst({
             where: {
                 rollNo: parseInt(rollNo),
-                college: req.college
-                // session: session
+                college: req.college,
+                ...(session ? { session } : {})
             },
             include: {
                 parents: true,
