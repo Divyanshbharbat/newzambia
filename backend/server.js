@@ -20,6 +20,7 @@ const bus = require("./routes/busRoutes");
 const dashboard = require("./routes/dashboardRoutes");
 
 const rag = require("./routes/ragRoutes");
+const { initBackupScheduler } = require("./utils/backupScheduler");
 
 const app = express();
 
@@ -291,5 +292,6 @@ const HOST = '0.0.0.0';
 checkAndInitializeDatabase().then(() => {
     app.listen(5000, HOST, () => {
         console.log(`Server is running on http://${HOST}:5000`);
+        initBackupScheduler();
     });
 });

@@ -9,6 +9,7 @@ const path = require("path");
 
 const { exec } = require("child_process");
 const { findMatchingStandard } = require("../utils/standardMatcher");
+const { runBackupAndCleanup, performBackup, cleanOldBackups, BACKUP_DIR, ensureBackupDir } = require("../utils/backupScheduler");
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -26,44 +27,55 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
+// Create on-demand backup & download it
 router.get("/api/backup", async (req, res) => {
   try {
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl) {
-      return res.status(500).json({ error: "DATABASE_URL not found in .env" });
-    }
+    const backupFile = await performBackup();
+    cleanOldBackups(60); // Auto-delete backups older than 2 months
 
-    const urlRegex = /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/([^?]+)/;
-    const match = dbUrl.match(urlRegex);
-
-    if (!match) {
-      return res.status(500).json({ error: "Invalid DATABASE_URL format" });
-    }
-
-    const [_, user, password, host, port, dbname] = match;
-    const backupFile = path.join(__dirname, `../backup_${Date.now()}.sql`);
-
-    const env = { ...process.env, PGPASSWORD: password };
-    const command = `pg_dump -h ${host} -p ${port} -U ${user} -d ${dbname} -f "${backupFile}"`;
-
-    exec(command, { env }, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`pg_dump error: ${error.message}`);
-        return res.status(500).json({ error: "Backup failed", details: error.message });
+    const downloadName = path.basename(backupFile);
+    res.download(backupFile, downloadName, (err) => {
+      if (err) {
+        console.error(`Download error: ${err.message}`);
       }
-
-      res.download(backupFile, "erp_backup.sql", (err) => {
-        if (err) {
-          console.error(`Download error: ${err.message}`);
-        }
-        if (fs.existsSync(backupFile)) {
-          fs.unlinkSync(backupFile);
-        }
-      });
     });
   } catch (error) {
     console.error("Backup route error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: "Internal server error during backup", details: error.message });
+  }
+});
+
+// Trigger manual backup and cleanup job
+router.post("/api/backup/trigger", async (req, res) => {
+  try {
+    const result = await runBackupAndCleanup();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// List all saved backups and retention info
+router.get("/api/backup/list", (req, res) => {
+  try {
+    ensureBackupDir();
+    const files = fs.readdirSync(BACKUP_DIR).filter(f => f.endsWith('.sql'));
+    const backups = files.map(filename => {
+      const filePath = path.join(BACKUP_DIR, filename);
+      const stats = fs.statSync(filePath);
+      const ageDays = ((Date.now() - stats.mtimeMs) / (1000 * 60 * 60 * 24)).toFixed(1);
+      return {
+        filename,
+        sizeBytes: stats.size,
+        createdAt: stats.mtime,
+        ageDays: parseFloat(ageDays),
+        expiresInDays: (60 - parseFloat(ageDays)).toFixed(1)
+      };
+    });
+    backups.sort((a, b) => b.createdAt - a.createdAt);
+    res.json({ backups, retentionDays: 60, totalCount: backups.length });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to list backups", details: error.message });
   }
 });
 
