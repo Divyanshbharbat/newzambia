@@ -238,3 +238,186 @@
   background-color: #ccc;
   cursor: not-allowed;
 }
+
+/* Transactions Report KPI & UI Styles */
+.transactions-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  margin-bottom: 25px;
+}
+
+.txn-kpi-card {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 18px 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: transform 0.2s, box-shadow 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.txn-kpi-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.txn-kpi-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+}
+
+.txn-kpi-card.card-total::before { background: #10b981; }
+.txn-kpi-card.card-fees::before { background: #313970; }
+.txn-kpi-card.card-inventory::before { background: #f59e0b; }
+.txn-kpi-card.card-lunch::before { background: #06b6d4; }
+.txn-kpi-card.card-bus::before { background: #8b5cf6; }
+
+.txn-kpi-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.txn-kpi-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.txn-kpi-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.txn-kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.txn-kpi-count {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* Quick Filter Preset Pills */
+.date-presets-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.date-presets-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  margin-right: 4px;
+}
+
+.preset-pill-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 20px;
+  border: 1px solid #cbd5e1;
+  background: white;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.preset-pill-btn:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+}
+
+.preset-pill-btn.active {
+  background: #AF1763;
+  color: white;
+  border-color: #AF1763;
+  font-weight: 600;
+}
+
+/* Badges */
+.badge-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.badge-category.badge-fees {
+  background-color: #e0e7ff;
+  color: #313970;
+}
+
+.badge-category.badge-inventory {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.badge-category.badge-lunch {
+  background-color: #cffafe;
+  color: #155e75;
+}
+
+.badge-category.badge-bus {
+  background-color: #f3e8ff;
+  color: #6b21a8;
+}
+
+.badge-status-paid {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.table-summary-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  margin-top: 15px;
+  font-size: 14px;
+  color: #334155;
+  font-weight: 600;
+}
+

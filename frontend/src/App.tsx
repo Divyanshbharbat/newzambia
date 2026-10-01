@@ -289,10 +289,22 @@ const App: React.FC = () => {
                 }
               />
             <Route
+              path="/Report"
+              element={
+                <ProtectedRoute auth={auth} allowedRoles={["admin", "teacher"]}>
+                  <SessionProtectedRoute>
+                    <Report />
+                  </SessionProtectedRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/Dashboard"
               element={
-                <ProtectedRoute auth={auth} allowedRoles={["admin"]}>
-                  <Report />
+                <ProtectedRoute auth={auth} allowedRoles={["admin", "teacher"]}>
+                  <SessionProtectedRoute>
+                    <Report />
+                  </SessionProtectedRoute>
                 </ProtectedRoute>
               }
             />

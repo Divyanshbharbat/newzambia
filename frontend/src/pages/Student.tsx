@@ -65,6 +65,7 @@ const Student: React.FC = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [standardFeesMap, setStandardFeesMap] = useState<Record<string, number>>({});
 
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [selectedInventory, setSelectedInventory] = useState<Record<number, { selected: boolean; size?: string; quantity?: number }>>({});
@@ -180,6 +181,14 @@ const Student: React.FC = () => {
         }
         const mapped = arr.map((s: any) => (s.std ? s.std : s));
         setClasses(mapped);
+
+        const feeMap: Record<string, number> = {};
+        arr.forEach((s: any) => {
+          if (s && s.std) {
+            feeMap[s.std.trim().toLowerCase()] = Number(s.totalFees || 0);
+          }
+        });
+        setStandardFeesMap(feeMap);
       } catch (err) {
         console.error('Error fetching standards in Student.tsx', err);
       }
@@ -318,46 +327,87 @@ const Student: React.FC = () => {
   };
 
   const handleEditClick = (st: any) => {
-    const dobFormatted = st.dateOfBirth ? new Date(st.dateOfBirth).toISOString().split('T')[0] : "";
+    const divFee = (st.standardTotalFees !== undefined && st.standardTotalFees !== null && Number(st.standardTotalFees) > 0)
+      ? Number(st.standardTotalFees)
+      : (standardFeesMap[(st.standard || '').trim().toLowerCase()] || 0);
+
     setEditingStudent({
-      ...st,
-      dateOfBirth: dobFormatted,
-      parents: (st.parents && st.parents.length > 0) ? st.parents : [{
-        fatherName: "",
-        motherName: "",
-        fatherContact: "",
-        motherContact: "",
-        distanceFromSchool: "",
-        preferredPhoneNumber: "",
-        address: ""
-      }]
+      id: st.id,
+      rollNo: st.rollNo !== undefined && st.rollNo !== null ? String(st.rollNo) : "",
+      fullName: st.fullName || "",
+      standard: st.standard || "",
+      gender: st.gender || "Male",
+      divisionFee: divFee,
     });
   };
 
   const handleSaveStudentEdit = async () => {
     if (!editingStudent || !editingStudent.id) return;
+    if (!editingStudent.fullName || !editingStudent.fullName.trim()) {
+      alert("Student Full Name is required.");
+      return;
+    }
+    if (!editingStudent.standard || !editingStudent.standard.trim()) {
+      alert("Division / Standard is required.");
+      return;
+    }
+
     try {
-      await updateStudent(editingStudent.id, editingStudent);
+      const updatedStd = editingStudent.standard.trim();
+      const targetDivFee = standardFeesMap[updatedStd.toLowerCase()] ?? editingStudent.divisionFee ?? 0;
+      const parsedRollNo = editingStudent.rollNo !== undefined && editingStudent.rollNo !== "" && !isNaN(parseInt(editingStudent.rollNo))
+        ? parseInt(editingStudent.rollNo)
+        : undefined;
+
+      await updateStudent(editingStudent.id, {
+        fullName: editingStudent.fullName.trim(),
+        standard: updatedStd,
+        gender: editingStudent.gender,
+        rollNo: parsedRollNo,
+      });
       alert("Student updated successfully!");
+
+      // Immediately reflect update in searchResults UI
+      setSearchResults(prev => prev.map(s => {
+        if (s.id === editingStudent.id) {
+          return {
+            ...s,
+            fullName: editingStudent.fullName.trim(),
+            standard: updatedStd,
+            gender: editingStudent.gender,
+            rollNo: parsedRollNo !== undefined ? parsedRollNo : s.rollNo,
+            standardTotalFees: targetDivFee,
+          };
+        }
+        return s;
+      }));
+
       setEditingStudent(null);
-      handleSearchStudents(searchQuery);
+      handleSearchStudents(searchQuery, selectedDivision);
     } catch (err: any) {
       console.error("Error updating student:", err);
-      alert("Failed to update student: " + (err.response?.data?.error || err.message));
+      const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to update student";
+      alert("Failed to update student: " + errMsg);
     }
   };
 
-  const handleDeleteStudent = async (studentId: number) => {
-    if (!window.confirm("Are you sure you want to delete this student?")) return;
+  const handleDeleteStudent = async (studentId: number, studentName?: string) => {
+    const displayName = studentName ? `student "${studentName}"` : "this student";
+    if (!window.confirm(`Are you sure you want to delete ${displayName}? This action cannot be undone.`)) {
+      return;
+    }
     try {
       await axios.delete(`http://${window.location.hostname}:5000/delete/students`, {
         params: { studentId }
       });
+      // Remove immediately from UI
+      setSearchResults(prev => prev.filter(s => s.id !== studentId));
       alert("Student deleted successfully");
-      handleSearchStudents(searchQuery);
-    } catch (err) {
+      handleSearchStudents(searchQuery, selectedDivision);
+    } catch (err: any) {
       console.error("Error deleting student:", err);
-      alert("Failed to delete student");
+      const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || "Failed to delete student";
+      alert("Failed to delete student: " + errMsg);
     }
   };
 
@@ -828,8 +878,9 @@ const Student: React.FC = () => {
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {searchResults.map((st: any) => {
-                const parent = (st.parents && st.parents.length > 0) ? st.parents[0] : null;
-                const dobStr = st.dateOfBirth ? new Date(st.dateOfBirth).toISOString().split('T')[0] : 'N/A';
+                const divisionFee = (st.standardTotalFees !== undefined && st.standardTotalFees !== null && Number(st.standardTotalFees) > 0)
+                  ? Number(st.standardTotalFees)
+                  : (standardFeesMap[(st.standard || '').trim().toLowerCase()] || 0);
 
                 return (
                   <div
@@ -842,55 +893,42 @@ const Student: React.FC = () => {
                       boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                       <div>
-                        <h4 style={{ margin: '0 0 4px 0', fontSize: '18px', color: '#0f172a', fontWeight: 700 }}>
+                        <h4 style={{ margin: '0 0 6px 0', fontSize: '18px', color: '#0f172a', fontWeight: 700 }}>
                           {st.fullName}
                         </h4>
-                        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '13px', color: '#475569' }}>
-                          <span style={{ backgroundColor: '#eff6ff', color: '#2563eb', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', fontSize: '13px', color: '#475569' }}>
+                          {st.rollNo !== undefined && st.rollNo !== null && (
+                            <span style={{ backgroundColor: '#f1f5f9', color: '#334155', padding: '3px 10px', borderRadius: '4px', fontWeight: 600, border: '1px solid #e2e8f0' }}>
+                              Roll No: <strong>{st.rollNo}</strong>
+                            </span>
+                          )}
+                          <span style={{ backgroundColor: '#eff6ff', color: '#2563eb', padding: '3px 10px', borderRadius: '4px', fontWeight: 600, border: '1px solid #dbeafe' }}>
                             Division / Standard: {st.standard}
                           </span>
-                          <span style={{ backgroundColor: '#f0fdf4', color: '#16a34a', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
-                            Session: {st.session}
+                          <span style={{ backgroundColor: '#f8fafc', color: '#334155', padding: '3px 10px', borderRadius: '4px', fontWeight: 600, border: '1px solid #e2e8f0' }}>
+                            Gender: <strong>{st.gender || 'N/A'}</strong>
                           </span>
-                          <span>Gender: <strong>{st.gender || 'N/A'}</strong></span>
-                          <span>DOB: <strong>{dobStr}</strong></span>
+                          <span style={{ backgroundColor: '#ecfdf5', color: '#047857', padding: '3px 10px', borderRadius: '4px', fontWeight: 700, border: '1px solid #a7f3d0' }}>
+                            Division Fee: K {divisionFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </div>
                       </div>
 
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
                           onClick={() => handleEditClick(st)}
-                          style={{ padding: '6px 14px', backgroundColor: '#eab308', color: '#000000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
+                          style={{ padding: '7px 16px', backgroundColor: '#eab308', color: '#000000', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
                         >
                           Edit Student
                         </button>
                         <button
-                          onClick={() => handleDeleteStudent(st.id)}
-                          style={{ padding: '6px 14px', backgroundColor: '#ef4444', color: '#ffffff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
+                          onClick={() => handleDeleteStudent(st.id, st.fullName)}
+                          style={{ padding: '7px 16px', backgroundColor: '#ef4444', color: '#ffffff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}
                         >
                           Delete
                         </button>
-                      </div>
-                    </div>
-
-                    {/* Detailed info grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', fontSize: '13px', color: '#334155' }}>
-                      <div>
-                        <strong>Nationality:</strong> {st.nationality || 'N/A'}<br />
-                        <strong>Religion:</strong> {st.religion || 'N/A'}<br />
-                        <strong>Blood Group:</strong> {st.bloodGroup || 'N/A'}
-                      </div>
-                      <div>
-                        <strong>Father Name:</strong> {parent?.fatherName && parent.fatherName !== 'N/A' ? parent.fatherName : 'N/A'}<br />
-                        <strong>Mother Name:</strong> {parent?.motherName && parent.motherName !== 'N/A' ? parent.motherName : 'N/A'}<br />
-                        <strong>Parent Contact:</strong> {parent?.fatherContact && parent.fatherContact.toString() !== '0' ? parent.fatherContact : (parent?.motherContact && parent.motherContact.toString() !== '0' ? parent.motherContact : 'N/A')}
-                      </div>
-                      <div>
-                        <strong>Residential Address:</strong> {st.residentialAddress || 'N/A'}<br />
-                        <strong>Scholarship:</strong> {st.scholarshipApplied ? 'Applied' : 'No'}<br />
-                        <strong>Meals:</strong> {st.lunchAccepted ? 'Yes' : 'No'} | <strong>Bus:</strong> {st.busAccepted ? 'Yes' : 'No'}
                       </div>
                     </div>
                   </div>
@@ -900,7 +938,7 @@ const Student: React.FC = () => {
           </div>
         )}
 
-        {/* Edit Student Modal / Inline Form */}
+        {/* Edit Student Modal */}
         {editingStudent && (
           <div style={{
             position: 'fixed',
@@ -915,23 +953,22 @@ const Student: React.FC = () => {
             <div style={{
               backgroundColor: '#ffffff',
               borderRadius: '12px',
-              maxWidth: '650px',
+              maxWidth: '500px',
               width: '100%',
-              maxHeight: '90vh',
-              overflowY: 'auto',
               padding: '24px',
               boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
             }}>
               <h3 style={{ margin: '0 0 16px 0', fontSize: '20px', color: '#0f172a', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
-                Edit Student Profile: {editingStudent.fullName}
+                Edit Student: {editingStudent.fullName}
               </h3>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '16px' }}>
                 <div>
                   <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Full Name *</label>
                   <input
                     type="text"
                     className="StudentInput"
+                    placeholder="Enter student full name"
                     value={editingStudent.fullName || ''}
                     onChange={(e) => setEditingStudent({ ...editingStudent, fullName: e.target.value })}
                   />
@@ -941,8 +978,12 @@ const Student: React.FC = () => {
                   <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Division / Standard *</label>
                   <select
                     value={editingStudent.standard || ''}
-                    onChange={(e) => setEditingStudent({ ...editingStudent, standard: e.target.value })}
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    onChange={(e) => {
+                      const newStd = e.target.value;
+                      const newDivFee = standardFeesMap[newStd.trim().toLowerCase()] || 0;
+                      setEditingStudent({ ...editingStudent, standard: newStd, divisionFee: newDivFee });
+                    }}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '14px' }}
                   >
                     <option value="">Select Division</option>
                     {classes.map((cls: string, idx: number) => (
@@ -951,115 +992,34 @@ const Student: React.FC = () => {
                   </select>
                 </div>
 
+                {editingStudent.standard && (
+                  <div style={{ backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '6px', padding: '10px 14px', fontSize: '13px', color: '#065f46' }}>
+                    <strong>Standard Fee for {editingStudent.standard}:</strong> K {Number(editingStudent.divisionFee !== undefined ? editingStudent.divisionFee : (standardFeesMap[editingStudent.standard.trim().toLowerCase()] || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                )}
+
                 <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Gender</label>
+                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Roll No</label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="StudentInput"
+                    placeholder="Enter roll number"
+                    value={editingStudent.rollNo !== undefined ? editingStudent.rollNo : ''}
+                    onChange={(e) => setEditingStudent({ ...editingStudent, rollNo: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Gender *</label>
                   <select
                     value={editingStudent.gender || 'Male'}
                     onChange={(e) => setEditingStudent({ ...editingStudent, gender: e.target.value })}
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '14px' }}
                   >
                     <option value="Male">Male</option>
                     <option value="Female">Female</option>
                   </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Date of Birth</label>
-                  <input
-                    type="date"
-                    className="StudentInput"
-                    value={editingStudent.dateOfBirth || ''}
-                    onChange={(e) => setEditingStudent({ ...editingStudent, dateOfBirth: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Nationality</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.nationality || ''}
-                    onChange={(e) => setEditingStudent({ ...editingStudent, nationality: e.target.value })}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Religion</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.religion || ''}
-                    onChange={(e) => setEditingStudent({ ...editingStudent, religion: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Residential Address</label>
-                <input
-                  type="text"
-                  className="StudentInput"
-                  value={editingStudent.residentialAddress || ''}
-                  onChange={(e) => setEditingStudent({ ...editingStudent, residentialAddress: e.target.value })}
-                />
-              </div>
-
-              <h4 style={{ margin: '16px 0 8px 0', fontSize: '15px', color: '#1e293b' }}>Parents Information</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Father Name</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.parents?.[0]?.fatherName || ''}
-                    onChange={(e) => {
-                      const newParents = [...(editingStudent.parents || [{}])];
-                      newParents[0] = { ...newParents[0], fatherName: e.target.value };
-                      setEditingStudent({ ...editingStudent, parents: newParents });
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Mother Name</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.parents?.[0]?.motherName || ''}
-                    onChange={(e) => {
-                      const newParents = [...(editingStudent.parents || [{}])];
-                      newParents[0] = { ...newParents[0], motherName: e.target.value };
-                      setEditingStudent({ ...editingStudent, parents: newParents });
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Father Contact</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.parents?.[0]?.fatherContact || ''}
-                    onChange={(e) => {
-                      const newParents = [...(editingStudent.parents || [{}])];
-                      newParents[0] = { ...newParents[0], fatherContact: e.target.value };
-                      setEditingStudent({ ...editingStudent, parents: newParents });
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Mother Contact</label>
-                  <input
-                    type="text"
-                    className="StudentInput"
-                    value={editingStudent.parents?.[0]?.motherContact || ''}
-                    onChange={(e) => {
-                      const newParents = [...(editingStudent.parents || [{}])];
-                      newParents[0] = { ...newParents[0], motherContact: e.target.value };
-                      setEditingStudent({ ...editingStudent, parents: newParents });
-                    }}
-                  />
                 </div>
               </div>
 

@@ -636,7 +636,36 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       });
     }
 
+    const seenInBatch = new Set();
+
     for (const student of students) {
+      const trimmedName = (student.fullName || "").trim();
+      if (!trimmedName) continue;
+
+      const studentBatchKey = `${trimmedName.toLowerCase()}__${student.standard.toLowerCase()}__${student.session}`;
+      if (seenInBatch.has(studentBatchKey)) {
+        results.duplicateCount++;
+        results.duplicates.push(`${trimmedName} (Class: ${student.standard}) [Duplicate in file]`);
+        continue;
+      }
+      seenInBatch.add(studentBatchKey);
+
+      // Check if student with same name already exists in this standard and session
+      const existingByName = await prisma.student.findFirst({
+        where: {
+          fullName: { equals: trimmedName, mode: 'insensitive' },
+          standard: student.standard,
+          session: student.session,
+          college: targetCollege
+        }
+      });
+
+      if (existingByName) {
+        results.duplicateCount++;
+        results.duplicates.push(`${trimmedName} (Class: ${student.standard}) [Already exists]`);
+        continue;
+      }
+
       let rollNoToUse = student.rollNo;
       if (!rollNoToUse) {
         const maxStudent = await prisma.student.findFirst({
@@ -659,7 +688,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
 
       if (existingStudent) {
         results.duplicateCount++;
-        results.duplicates.push(`${student.fullName} (Roll: ${rollNoToUse}, Std: ${student.standard})`);
+        results.duplicates.push(`${trimmedName} (Roll: ${rollNoToUse}, Std: ${student.standard}) [Roll already exists]`);
         continue;
       }
 
@@ -756,64 +785,71 @@ router.post("/changesFromControlPanel", async (req, res) => {
   const { number_of_hostel_bed, institutioName, hostelName, schoolAddress, totalFee, schoolLogo, year, lunchFee, college } = req.body;
   const activeCollege = req.college || college || null;
 
-  if (!year) {
-    return res.status(400).json({ error: 'Session year is required' });
-  }
-
   try {
-    // Find the session by year and college
-    const sessionRecord = await prisma.session.findUnique({
-      where: { year_college: { year, college: activeCollege } }
-    });
+    let sessionRecord = null;
+    if (year) {
+      sessionRecord = await prisma.session.findUnique({
+        where: { year_college: { year, college: activeCollege } }
+      });
+    }
 
     if (!sessionRecord) {
-      return res.status(404).json({ error: 'Session not found. Please add the session first.' });
+      sessionRecord = await prisma.session.findFirst({
+        where: { college: activeCollege },
+        orderBy: { id: 'desc' }
+      });
     }
 
     const payload = {
-      sessionId: sessionRecord.id,
       college: activeCollege,
-      number_of_hostel_bed: number_of_hostel_bed ? parseInt(number_of_hostel_bed) : undefined,
-      Institution_name: institutioName,
-      Institution_hostel_name: hostelName,
-      SchoolAddress: schoolAddress,
-      TotalFees: totalFee ? parseInt(totalFee) : undefined,
-      SchoolLogo: schoolLogo,
-      lunchFee: lunchFee ? parseFloat(lunchFee) : undefined,
     };
+    if (sessionRecord) {
+      payload.sessionId = sessionRecord.id;
+    }
+    if (institutioName !== undefined) payload.Institution_name = institutioName;
+    if (hostelName !== undefined) payload.Institution_hostel_name = hostelName;
+    if (schoolAddress !== undefined) payload.SchoolAddress = schoolAddress;
+    if (schoolLogo !== undefined) payload.SchoolLogo = schoolLogo;
+    if (number_of_hostel_bed !== undefined && number_of_hostel_bed !== "") payload.number_of_hostel_bed = parseInt(number_of_hostel_bed) || 0;
+    if (totalFee !== undefined && totalFee !== "") payload.TotalFees = parseInt(totalFee) || 0;
+    if (lunchFee !== undefined && lunchFee !== "") payload.lunchFee = parseFloat(lunchFee) || 0;
 
-    // 1. Try to find session-specific record
-    let existingRecord = await prisma.control.findUnique({
-      where: { sessionId_college: { sessionId: sessionRecord.id, college: activeCollege } }
-    });
+    // 1. Try to find session-specific or college control record
+    let existingRecord = null;
+    if (sessionRecord) {
+      existingRecord = await prisma.control.findUnique({
+        where: { sessionId_college: { sessionId: sessionRecord.id, college: activeCollege } }
+      });
+    }
+    if (!existingRecord) {
+      existingRecord = await prisma.control.findFirst({
+        where: { college: activeCollege }
+      });
+    }
 
+    let updatedRecord;
     if (existingRecord) {
-      // Update session-specific record
-      const updated = await prisma.control.update({
+      updatedRecord = await prisma.control.update({
         where: { id: existingRecord.id },
         data: payload
       });
-      return res.status(200).json(updated);
+    } else {
+      updatedRecord = await prisma.control.create({ data: payload });
     }
 
-    // 2. If not found, check for legacy record (null sessionId) for THIS college
-    const legacyRecord = await prisma.control.findFirst({
-      where: { sessionId: null, college: activeCollege }
-    });
-
-    if (legacyRecord) {
-      // Transition legacy record to session-specific
-      const updated = await prisma.control.update({
-        where: { id: legacyRecord.id },
-        data: payload
+    // Keep Institution Name, Address, and Logo consistent across any other records for this college
+    if (institutioName !== undefined || schoolAddress !== undefined || schoolLogo !== undefined) {
+      const brandData = {};
+      if (institutioName !== undefined) brandData.Institution_name = institutioName;
+      if (schoolAddress !== undefined) brandData.SchoolAddress = schoolAddress;
+      if (schoolLogo !== undefined) brandData.SchoolLogo = schoolLogo;
+      await prisma.control.updateMany({
+        where: { college: activeCollege },
+        data: brandData
       });
-      return res.status(200).json(updated);
     }
 
-    // 3. If no legacy record, create a new one
-    const newRecord = await prisma.control.create({ data: payload });
-    return res.status(201).json(newRecord);
-
+    return res.status(200).json(updatedRecord);
   } catch (error) {
     console.error('Error in changesFromControlPanel:', error);
     return res.status(500).json({ error: 'Server error' });

@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import "../styles/navbar.css";
-import { SetStateAction, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentSession, fetchControlConfig } from "../apis/api";
 import { useSetRecoilState } from "recoil";
 import { handleInstitutionName, handleInstitutionLogo } from "../store/store";
@@ -14,6 +14,7 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ auth, logout, onSessionChange }) => {
   const links = [
+    { name: "Report", path: "Report", roles: ["admin", "teacher"] },
     { name: "Student", path: "Student", roles: ["admin", "teacher"] },
     { name: "Promote Student", path: "PromoteStudent", roles: ["admin", "teacher"] },
     { name: "Fees", path: "Fees", roles: ["admin"] },

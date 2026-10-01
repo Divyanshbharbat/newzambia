@@ -54,6 +54,16 @@ export const report = async () => {
   return await axios.get(`${root}/reportsdata`);
 };
 
+export const fetchTransactionsReport = async (params?: { startDate?: string; endDate?: string; category?: string; standard?: string }) => {
+  try {
+    const response = await axios.get(`${root}/reports/transactions`, { params });
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching transactions report:", error);
+    throw error;
+  }
+};
+
 
 //Student Operations
 export const createStudent = async (student: Student) => {
@@ -68,15 +78,12 @@ export const createStudent = async (student: Student) => {
 
 export const updateStudent = async (studentId: number, editableStudent: any) => {
   try {
-    const response = await axios.get(`http://${window.location.hostname}:5000/students/rollNo`, {
-      params: { rollno: editableStudent.rollNo, standard: editableStudent.standard }
-    });
-    const currentData = response.data;
-    if (editableStudent.url) {
-      const updateData = { ...currentData, photoUrl: editableStudent.url };
-      return await axios.put(`http://${window.location.hostname}:5000/update/student/${studentId}`, updateData);
+    const updateData = { ...editableStudent };
+    if (editableStudent.url && !updateData.photoUrl) {
+      updateData.photoUrl = editableStudent.url;
     }
-    return await axios.put(`http://${window.location.hostname}:5000/update/student/${studentId}`, editableStudent);  
+    const response = await axios.put(`http://${window.location.hostname}:5000/update/student/${studentId}`, updateData);
+    return response.data;
   } catch (error) {
     console.error("Error updating student:", error);
     throw error;

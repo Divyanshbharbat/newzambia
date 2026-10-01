@@ -93,7 +93,7 @@ const Control: React.FC = () => {
   // CRUD States
   const [standards, setStandards] = useState<Standard[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedSessionForConfig, setSelectedSessionForConfig] = useState<string>("");
+  const [selectedSessionForConfig] = useState<string>("");
   const [isLoadingConfig, setIsLoadingConfig] = useState<boolean>(false);
   const [configStatus, setConfigStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   // Keep isLoadingConfig used to satisfy lint
@@ -266,14 +266,14 @@ const Control: React.FC = () => {
     }
   };
 
-  // fetch config for selected session
+  // fetch school branding configuration
   useEffect(() => {
     const fetchConfig = async () => {
-      if (!selectedSessionForConfig) return;
       setIsLoadingConfig(true);
       try {
         const college = localStorage.getItem('userCollege');
-        const cfg = await fetchControlConfig(selectedSessionForConfig, college || undefined);
+        const activeYear = localStorage.getItem('selectedSession') || '';
+        const cfg = await fetchControlConfig(activeYear, college || undefined);
         if (cfg) {
           setInstitutionName(cfg.Institution_name || '');
           setHostelName(cfg.Institution_hostel_name || '');
@@ -284,14 +284,14 @@ const Control: React.FC = () => {
           setUrl(cfg.SchoolLogo || '');
         }
       } catch (e) {
-        console.error('Failed to load control config for session', e);
+        console.error('Failed to load control config', e);
       } finally {
         setIsLoadingConfig(false);
       }
     };
 
     fetchConfig();
-  }, [selectedSessionForConfig]);
+  }, []);
 
   const loadAllStandards = async () => {
     try {
@@ -479,10 +479,7 @@ const Control: React.FC = () => {
   const handleControlChanges = async () => {
     setConfigStatus(null);
     try {
-      if (!selectedSessionForConfig) {
-        setConfigStatus({ type: 'error', message: 'Please select a session before saving configuration.' });
-        return;
-      }
+      const activeYear = selectedSessionForConfig || localStorage.getItem('selectedSession') || (sessions.length > 0 ? sessions[0].year : undefined);
 
       const data = {
         num_of_beds,
@@ -492,16 +489,16 @@ const Control: React.FC = () => {
         totalFee,
         url,
         lunchFee,
-        year: selectedSessionForConfig,
+        year: activeYear,
         college: localStorage.getItem('userCollege') || undefined,
       };
 
       const res = await addControlValues(data);
       if (res) {
-        setConfigStatus({ type: 'success', message: `Configuration for ${selectedSessionForConfig} updated successfully!` });
+        setConfigStatus({ type: 'success', message: 'School configuration updated successfully!' });
         // Notify other parts of the app
         try {
-          window.dispatchEvent(new CustomEvent('controlUpdated', { detail: { year: selectedSessionForConfig } }));
+          window.dispatchEvent(new CustomEvent('controlUpdated', { detail: { year: activeYear } }));
         } catch (e) { }
       }
     } catch (error: any) {
@@ -1030,14 +1027,6 @@ const Control: React.FC = () => {
       {/* Set Configurations Section */}
       <div className="control-section">
         <h2>Set Configurations</h2>
-        <label>Session (required):</label>
-        <select value={selectedSessionForConfig} onChange={(e) => setSelectedSessionForConfig(e.target.value)} style={{ marginBottom: "15px" }}>
-          <option value="">Select Session (required)</option>
-          {sessions.map(s => (
-            <option key={s.id} value={s.year}>{s.year}</option>
-          ))}
-        </select>
-
         <label>Set Institute Name:</label>
         <input
           type="text"
@@ -1074,9 +1063,8 @@ const Control: React.FC = () => {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn" onClick={handleControlChanges}>Submit</button>
-          <button className="btn" style={{ backgroundColor: '#4f46e5' }} onClick={handleControlChanges}>Update</button>
+        <div>
+          <button className="btn" onClick={handleControlChanges}>Save Configuration</button>
         </div>
       </div>
 

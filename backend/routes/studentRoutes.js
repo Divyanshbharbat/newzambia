@@ -105,6 +105,19 @@ router.post("/students", async (req, res) => {
 
         const finalStandard = matchedStandard.std;
 
+        // Check if student with same name already exists in this standard, session, and college
+        const existingByName = await prisma.student.findFirst({
+            where: {
+                fullName: { equals: fullName.trim(), mode: 'insensitive' },
+                standard: finalStandard,
+                session,
+                college
+            }
+        });
+        if (existingByName) {
+            return res.status(400).json({ error: `A student named '${fullName.trim()}' already exists in Class '${finalStandard}'.` });
+        }
+
         let finalRollNo;
         if (rollNo && !isNaN(parseInt(rollNo))) {
             finalRollNo = parseInt(rollNo);
@@ -409,7 +422,28 @@ router.get("/getallstudent", async (req, res) => {
             },
             orderBy: [{ standard: 'asc' }, { rollNo: 'asc' }, { fullName: 'asc' }]
         });
-        res.status(200).json(JSON.parse(JSON.stringify({ result }, jsonBigIntReplacer)));
+
+        // Enrich with division / standard totalFees
+        const standards = await prisma.standards.findMany({
+            where: { college: req.college }
+        });
+        const feeMap = new Map();
+        standards.forEach(stdObj => {
+            if (stdObj.std) {
+                feeMap.set(stdObj.std.trim().toLowerCase(), stdObj.totalFees || 0);
+            }
+        });
+
+        const enrichedResult = result.map(s => {
+            const stdKey = (s.standard || "").trim().toLowerCase();
+            const standardTotalFees = feeMap.get(stdKey) ?? 0;
+            return {
+                ...s,
+                standardTotalFees
+            };
+        });
+
+        res.status(200).json(JSON.parse(JSON.stringify({ result: enrichedResult }, jsonBigIntReplacer)));
     } catch (error) {
         console.error("Error fetching students:", error);
         res.status(500).json({ error: "Failed to fetch students" });
@@ -419,7 +453,7 @@ router.get("/getallstudent", async (req, res) => {
 
 // Get searched student by rollno.:
 router.get("/students/rollNo", async (req, res) => {
-    const { rollno , standard } = req.query;
+    const { rollno, standard } = req.query;
     const session = req.session;
 
     if (!session) {
@@ -428,36 +462,43 @@ router.get("/students/rollNo", async (req, res) => {
 
     try {
         const searchStds = await getSearchStandards(standard, req.college);
-        let student;
-        if (/^\d+$/.test(rollno)){
-            student = await prisma.student.findFirst({
-                where: {
-                    rollNo: parseInt(rollno),
-                    standard: { in: searchStds },
-                    session: session,
-                    college: req.college
-                },
-                include: {
-                    parents: true,
-                    fees: true,
-                },
-            });    
-        }else{
-            student = await prisma.student.findFirst({
-                where: {
-                    rollNo: parseInt(rollno),
-                    standard: { in: searchStds },
-                    session: session,
-                    college: req.college
-                },
-                include: {
-                    parents: true,
-                    fees: true,
-                },
-            });   
+        const trimmedRoll = rollno !== undefined && rollno !== null ? String(rollno).trim() : "";
+
+        // If rollno is not provided or is invalid ("NaN", "undefined", ""), return clear response
+        if (!trimmedRoll || trimmedRoll === "NaN" || trimmedRoll === "undefined") {
+            return res.status(400).json({ message: "A valid roll number is required." });
         }
+
+        const whereClause = {
+            standard: { in: searchStds },
+            session: session,
+            college: req.college
+        };
+
+        if (/^\d+$/.test(trimmedRoll)) {
+            whereClause.rollNo = parseInt(trimmedRoll);
+        } else {
+            // If rollno is a student name
+            whereClause.fullName = { contains: trimmedRoll, mode: 'insensitive' };
+        }
+
+        const student = await prisma.student.findFirst({
+            where: whereClause,
+            include: {
+                parents: true,
+                fees: true,
+            },
+        });
+
         if (student) {
-            res.status(200).send(JSON.parse(JSON.stringify(student, jsonBigIntReplacer)));
+            const stdObj = await prisma.standards.findFirst({
+                where: { std: student.standard, college: req.college }
+            });
+            const enriched = {
+                ...student,
+                standardTotalFees: stdObj ? (stdObj.totalFees || 0) : 0
+            };
+            res.status(200).send(JSON.parse(JSON.stringify(enriched, jsonBigIntReplacer)));
         } else {
             res.status(404).json({ message: "Student not found" });
         }
@@ -607,38 +648,180 @@ router.put("/update/student/:id", async (req, res) => {
             updateData.busPrice = busPriceValue;
         }
 
+        const currentStudent = await prisma.student.findUnique({ where: { id: studentId } });
+        if (!currentStudent) {
+            return res.status(404).json({ error: "Student not found" });
+        }
+
+        if (fullName !== undefined || standard !== undefined) {
+            const checkName = (fullName !== undefined ? fullName : currentStudent.fullName).trim();
+            const checkStandard = (standard !== undefined ? standard : currentStudent.standard).trim();
+            const duplicateStudent = await prisma.student.findFirst({
+                where: {
+                    id: { not: studentId },
+                    fullName: { equals: checkName, mode: 'insensitive' },
+                    standard: checkStandard,
+                    session: currentStudent.session,
+                    college: currentStudent.college
+                }
+            });
+            if (duplicateStudent) {
+                return res.status(400).json({ error: `A student named '${checkName}' already exists in Class '${checkStandard}'.` });
+            }
+        }
+
+        if (rollNo !== undefined || standard !== undefined) {
+            const checkRoll = (rollNo !== undefined && !isNaN(parseInt(rollNo))) ? parseInt(rollNo) : currentStudent.rollNo;
+            const checkStandard = (standard !== undefined ? standard : currentStudent.standard).trim();
+            const duplicateRoll = await prisma.student.findFirst({
+                where: {
+                    id: { not: studentId },
+                    rollNo: checkRoll,
+                    standard: checkStandard,
+                    session: currentStudent.session,
+                    college: currentStudent.college
+                }
+            });
+            if (duplicateRoll) {
+                return res.status(400).json({ error: `Roll No. ${checkRoll} is already assigned to '${duplicateRoll.fullName}' in Class '${checkStandard}'.` });
+            }
+        }
+
         // Update student details
         const updatedStudent = await prisma.student.update({
             where: { id: studentId },
             data: updateData,
         });
 
-        // Update parent details
-        const updatedParents = Array.isArray(parents)
-            ? await Promise.all(
-                parents.map((parent) =>
-                    prisma.parent.update({
-                        where: { id: parent.id },
+        // Update fee if feeAmount is specified
+        if (req.body.feeAmount !== undefined) {
+            const fAmount = parseFloat(req.body.feeAmount);
+            if (!isNaN(fAmount) && fAmount >= 0) {
+                const allFees = await prisma.fee.findMany({ where: { studentId } });
+                if (allFees.length > 0) {
+                    await prisma.fee.update({
+                        where: { id: allFees[0].id },
+                        data: { amount: fAmount }
+                    });
+                    if (allFees.length > 1) {
+                        const extraIds = allFees.slice(1).map(f => f.id);
+                        await prisma.fee.deleteMany({
+                            where: { id: { in: extraIds } }
+                        });
+                    }
+                } else if (fAmount > 0) {
+                    await prisma.fee.create({
                         data: {
-                            fatherName: parent.fatherName,
-                            motherName: parent.motherName,
-                            fatherContact: parent.fatherContact,
-                            motherContact: parent.motherContact,
-                            distanceFromSchool: parent.distanceFromSchool ? parseFloat(parent.distanceFromSchool) : null,
-                            preferredPhoneNumber: parent.preferredPhoneNumber ? parseInt(parent.preferredPhoneNumber) : null,
-                            address: parent.address,
+                            title: "General Fee",
+                            amount: fAmount,
+                            studentId: studentId,
+                            college: currentStudent.college
+                        }
+                    });
+                }
+            }
+        }
+
+        // Update parent details
+        let updatedParents = [];
+        if (Array.isArray(parents)) {
+            const existingParents = await prisma.parent.findMany({
+                where: { studentId: studentId },
+            });
+
+            const parseBigIntContact = (val) => {
+                if (val === null || val === undefined || val === "") return 0n;
+                const clean = String(val).replace(/\D/g, "");
+                if (!clean) return 0n;
+                try {
+                    return BigInt(clean);
+                } catch {
+                    return 0n;
+                }
+            };
+
+            const parseNullableBigInt = (val) => {
+                if (val === null || val === undefined || val === "") return null;
+                const clean = String(val).replace(/\D/g, "");
+                if (!clean) return null;
+                try {
+                    return BigInt(clean);
+                } catch {
+                    return null;
+                }
+            };
+
+            const parseFloatNullable = (val) => {
+                if (val === null || val === undefined || val === "") return null;
+                const num = parseFloat(val);
+                return isNaN(num) ? null : num;
+            };
+
+            for (let i = 0; i < parents.length; i++) {
+                const parent = parents[i];
+                if (!parent) continue;
+
+                const fatherName = parent.fatherName ? String(parent.fatherName).trim() : "";
+                const motherName = parent.motherName ? String(parent.motherName).trim() : "";
+                const fatherContact = parseBigIntContact(parent.fatherContact);
+                const motherContact = parseBigIntContact(parent.motherContact);
+                const distanceFromSchool = parseFloatNullable(parent.distanceFromSchool);
+                const preferredPhoneNumber = parseNullableBigInt(parent.preferredPhoneNumber);
+                const address = parent.address ? String(parent.address).trim() : "";
+
+                const hasInfo = Boolean(
+                    fatherName ||
+                    motherName ||
+                    fatherContact !== 0n ||
+                    motherContact !== 0n ||
+                    address ||
+                    distanceFromSchool !== null ||
+                    preferredPhoneNumber !== null
+                );
+
+                let targetId = parent.id && !isNaN(parseInt(parent.id)) ? parseInt(parent.id) : null;
+                if (!targetId && existingParents[i]) {
+                    targetId = existingParents[i].id;
+                }
+
+                if (targetId) {
+                    const updated = await prisma.parent.update({
+                        where: { id: targetId },
+                        data: {
+                            fatherName: fatherName || "N/A",
+                            motherName: motherName || "N/A",
+                            fatherContact,
+                            motherContact,
+                            distanceFromSchool,
+                            preferredPhoneNumber,
+                            address: address || "N/A",
                         },
-                    })
-                )
-            )
-            : [];
+                    });
+                    updatedParents.push(updated);
+                } else if (hasInfo) {
+                    const created = await prisma.parent.create({
+                        data: {
+                            fatherName: fatherName || "N/A",
+                            motherName: motherName || "N/A",
+                            fatherContact,
+                            motherContact,
+                            distanceFromSchool,
+                            preferredPhoneNumber,
+                            address: address || "N/A",
+                            studentId: studentId,
+                        },
+                    });
+                    updatedParents.push(created);
+                }
+            }
+        }
 
         const response = {
             message: "Student updated successfully",
             student: updatedStudent,
             parents: updatedParents,
         };
-        res.status(201).json(JSON.stringify(response, jsonBigIntReplacer));
+        res.status(200).json(JSON.parse(JSON.stringify(response, jsonBigIntReplacer)));
     } catch (error) {
         console.error("Error updating student:", error);
         res.status(500).json({ error: "Failed to update student" });

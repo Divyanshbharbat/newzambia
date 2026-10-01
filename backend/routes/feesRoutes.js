@@ -434,4 +434,155 @@ router.get("/fees/details", async (req, res) => {
     }
   });
 
+  // GET /reports/transactions - Fetch transactions between start date and end date with breakdown
+  router.get("/reports/transactions", async (req, res) => {
+    try {
+      const { startDate, endDate, category, standard, session } = req.query;
+      const targetSession = session || req.session;
+      const college = req.college;
+
+      let start = null;
+      let end = null;
+      if (startDate) {
+        start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+      }
+      if (endDate) {
+        end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+      }
+
+      // 1. Fetch Fees Installments
+      const feeWhere = {
+        college: college,
+      };
+      if (start || end) {
+        feeWhere.amountDate = {};
+        if (start) feeWhere.amountDate.gte = start;
+        if (end) feeWhere.amountDate.lte = end;
+      }
+
+      const feesList = await prisma.fee.findMany({
+        where: feeWhere,
+        include: {
+          student: true
+        },
+        orderBy: { amountDate: 'desc' }
+      });
+
+      // 2. Fetch Student Inventory Purchases
+      const invWhere = {
+        student: { college: college }
+      };
+      if (start || end) {
+        invWhere.purchaseDate = {};
+        if (start) invWhere.purchaseDate.gte = start;
+        if (end) invWhere.purchaseDate.lte = end;
+      }
+
+      const inventoryList = await prisma.studentInventory.findMany({
+        where: invWhere,
+        include: {
+          inventory: true,
+          student: true
+        },
+        orderBy: { purchaseDate: 'desc' }
+      });
+
+      // 3. Process transactions
+      const transactions = [];
+
+      // Add fee transactions
+      feesList.forEach(f => {
+        const student = f.student;
+        if (standard && student && student.standard !== standard) return;
+
+        let cat = "Fees";
+        const titleLower = (f.title || "").toLowerCase();
+        if (titleLower.includes("lunch") || titleLower.includes("meal")) {
+          cat = "Lunch";
+        } else if (titleLower.includes("bus") || titleLower.includes("transport")) {
+          cat = "Bus Transport";
+        } else if (titleLower.includes("inventory") || titleLower.includes("uniform") || titleLower.includes("book") || titleLower.includes("jersey")) {
+          cat = "Inventory";
+        }
+
+        transactions.push({
+          id: `fee-${f.id}`,
+          refNo: `TXN-FEE-${String(f.id).padStart(4, '0')}`,
+          date: f.amountDate ? f.amountDate.toISOString() : new Date().toISOString(),
+          studentId: f.studentId,
+          studentName: student ? student.fullName : "Unknown",
+          rollNo: student && student.rollNo !== null ? student.rollNo : "-",
+          standard: student ? student.standard : "-",
+          category: cat,
+          title: f.title || "Fee Installment",
+          amount: parseFloat(f.amount) || 0,
+          status: "Paid"
+        });
+      });
+
+      // Add inventory transactions
+      inventoryList.forEach(item => {
+        const student = item.student;
+        if (standard && student && student.standard !== standard) return;
+
+        transactions.push({
+          id: `inv-${item.id}`,
+          refNo: `TXN-INV-${String(item.id).padStart(4, '0')}`,
+          date: item.purchaseDate ? item.purchaseDate.toISOString() : new Date().toISOString(),
+          studentId: item.studentId,
+          studentName: student ? student.fullName : "Unknown",
+          rollNo: student && student.rollNo !== null ? student.rollNo : "-",
+          standard: student ? student.standard : "-",
+          category: "Inventory",
+          title: item.inventory ? `${item.inventory.itemName} (Qty: ${item.quantityPurchased})` : `Inventory Item (Qty: ${item.quantityPurchased})`,
+          amount: parseFloat(item.totalPrice) || 0,
+          status: "Paid"
+        });
+      });
+
+      // Sort all transactions by date descending
+      transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      // Filter by category if specified
+      let filteredTransactions = transactions;
+      if (category && category.toLowerCase() !== "all") {
+        filteredTransactions = transactions.filter(t => t.category.toLowerCase() === category.toLowerCase());
+      }
+
+      // Calculate totals
+      let feesTotal = 0;
+      let inventoryTotal = 0;
+      let lunchTotal = 0;
+      let busTotal = 0;
+
+      transactions.forEach(t => {
+        if (t.category === "Fees") feesTotal += t.amount;
+        else if (t.category === "Inventory") inventoryTotal += t.amount;
+        else if (t.category === "Lunch") lunchTotal += t.amount;
+        else if (t.category === "Bus Transport") busTotal += t.amount;
+      });
+
+      const grandTotal = feesTotal + inventoryTotal + lunchTotal + busTotal;
+
+      res.status(200).json({
+        success: true,
+        summary: {
+          totalTransactions: transactions.length,
+          grandTotal,
+          feesTotal,
+          inventoryTotal,
+          lunchTotal,
+          busTotal,
+        },
+        transactions: filteredTransactions,
+        filteredCount: filteredTransactions.length
+      });
+    } catch (error) {
+      console.error("Error fetching transactions report:", error);
+      res.status(500).json({ error: "Failed to fetch transactions report" });
+    }
+  });
+
   module.exports = router;
