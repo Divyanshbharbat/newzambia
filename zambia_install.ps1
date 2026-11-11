@@ -199,60 +199,98 @@ if ((Get-Command code -ErrorAction SilentlyContinue) -or (Test-Path "C:\Program 
 }
 Write-Host ""
 
+
 # =========================================================
 # STEP 6 - CHECK & INSTALL POSTGRESQL
 # =========================================================
 
 Write-Host "[6] Checking PostgreSQL Database Server..." -ForegroundColor Cyan
 Refresh-EnvironmentPath
-
-$psqlCmd = $null
-if (Get-Command psql -ErrorAction SilentlyContinue) {
-    $psqlCmd = (Get-Command psql).Source
-} else {
-    $foundPsql = Resolve-Path "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue |
-        Sort-Object Path -Descending | Select-Object -First 1
-    if ($foundPsql) { $psqlCmd = $foundPsql.Path }
+ 
+# Windows PowerShell 5.1 can default to old TLS; force TLS 1.2 so downloads work.
+# Hiding the progress bar makes Invoke-WebRequest many times faster for big files.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
+ 
+# Finds the newest server psql.exe. Sorts by version number, not text
+# (as text, "9.6" sorts above "16").
+function Find-PostgresPsql {
+    $hit = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue |
+        Sort-Object { ($_.Directory.Parent.Name -as [double]) } -Descending |
+        Select-Object -First 1
+    if ($hit) { return $hit.FullName }
+    return $null
 }
-
+ 
+# Decide on the SERVICE, not on psql. A psql client on PATH (e.g. from pgAdmin)
+# does not mean a database server is installed.
 $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
-
-if (-not $psqlCmd -and -not $pgService) {
+ 
+if (-not $pgService) {
     Write-Host "[!] PostgreSQL server is not installed. Installing PostgreSQL 16..." -ForegroundColor Yellow
-    $pgInstalled = $false
-
+ 
+    if (-not $isAdmin) {
+        Write-Host "[WARN] Installing PostgreSQL needs Administrator rights. If this fails, right-click PowerShell > Run as Administrator and run the script again." -ForegroundColor Yellow
+    }
+ 
+    # Correct EDB silent switches. "--unattendedmode admin" is not a valid option
+    # and makes the installer stop with an error or hang on a dialog.
+    $pgSilentArgs = "--mode unattended --unattendedmodeui none --superpassword $databasePassword --serverport $databasePort"
+ 
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Host "Installing PostgreSQL via winget..."
-        winget install --id PostgreSQL.PostgreSQL.16 --source winget --accept-source-agreements --accept-package-agreements --override "--unattendedmode admin --superpassword password@123"
-        if ($LASTEXITCODE -eq 0) { $pgInstalled = $true }
+        winget install --id PostgreSQL.PostgreSQL.16 --exact --source winget --accept-source-agreements --accept-package-agreements --override "$pgSilentArgs"
+        Write-Host "winget exit code: $LASTEXITCODE"
     }
-
-    if (-not $pgInstalled) {
+ 
+    # Check the result by looking for the service, not winget's exit code
+    # (winget returns non-zero for "reboot required" even when the install worked).
+    if (-not (Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue)) {
         Write-Host "Downloading PostgreSQL installer from EDB..." -ForegroundColor Yellow
-        $pgInstallerPath = "$env:TEMP\postgresql_setup.exe"
-        $pgUrl = "https://sbp.enterprisedb.com/getpackages_win.jsp?file_id=1258674"
+        $pgInstallerPath = "$env:TEMP\postgresql-16-windows-x64.exe"
+        # Direct link to the .exe. The old getpackages_win.jsp?file_id=... link
+        # can return a web page instead of the installer.
+        $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-16.4-1-windows-x64.exe"
         try {
             Invoke-WebRequest -Uri $pgUrl -OutFile $pgInstallerPath -UseBasicParsing
-            Start-Process -FilePath $pgInstallerPath -ArgumentList "--mode unattended --superpassword password@123 --servicename postgresql-x64-16 --servicepassword password@123" -Wait
-            $pgInstalled = $true
+            $sizeMB = [math]::Round((Get-Item $pgInstallerPath).Length / 1MB)
+            if ($sizeMB -lt 50) { throw "Downloaded file is only $sizeMB MB, so it is not the installer." }
+ 
+            Write-Host "Running PostgreSQL installer silently (this takes a few minutes)..." -ForegroundColor Yellow
+            $proc = Start-Process -FilePath $pgInstallerPath -ArgumentList $pgSilentArgs -Wait -PassThru
+            Write-Host "PostgreSQL installer exit code: $($proc.ExitCode)"
         } catch {
-            Write-Host "[WARN] Automatic PostgreSQL installer download failed: $_" -ForegroundColor Yellow
+            Write-Host "[WARN] Automatic PostgreSQL install failed: $_" -ForegroundColor Yellow
         }
     }
-
     Refresh-EnvironmentPath
-    $psqlCmd = (Resolve-Path "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue | Sort-Object Path -Descending | Select-Object -First 1).Path
 }
-
-# Ensure PostgreSQL Windows Service is running
+ 
+# Make sure the PostgreSQL service is running, and wait until it is.
 $pgServices = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
 foreach ($service in $pgServices) {
     if ($service.Status -ne "Running") {
         Write-Host "Starting PostgreSQL service ($($service.Name))..." -ForegroundColor Yellow
-        Start-Service -Name $service.Name -ErrorAction SilentlyContinue
+        try {
+            Start-Service -Name $service.Name -ErrorAction Stop
+            $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+        } catch {
+            Write-Host "[WARN] Could not start $($service.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+        }
     }
 }
-
+ 
+# Find psql: prefer the server's own bin folder, then whatever is on PATH.
+$psqlCmd = Find-PostgresPsql
+if (-not $psqlCmd -and (Get-Command psql -ErrorAction SilentlyContinue)) {
+    $psqlCmd = (Get-Command psql).Source
+}
+ 
+if ($pgServices) {
+    Write-Host "[OK] PostgreSQL service found: $(($pgServices | ForEach-Object { "$($_.Name) [$($_.Status)]" }) -join ', ')" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] No PostgreSQL service was found after installation." -ForegroundColor Yellow
+}
 if ($psqlCmd) {
     Write-Host "[OK] Found PostgreSQL CLI: $psqlCmd" -ForegroundColor Green
 } else {
